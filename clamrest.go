@@ -62,19 +62,10 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var scanResults []*clamd.ScanResult
-
 	for responseItem := range response {
-		scanResults = append(scanResults, responseItem)
+		writeScanResponse(w, responseItem, path)
+		return // Return immediately after the first result to guarantee valid JSON
 	}
-
-	resJson, eRes := json.Marshal(scanResults)
-	if eRes != nil {
-		fmt.Println(eRes)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	fmt.Fprint(w, string(resJson))
 }
 
 //This is where the action happens.
@@ -108,8 +99,10 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			response, err := c.ScanStream(part, abort)
 			for s := range response {
 				writeScanResponse(w, s, part.FileName())
+				break
 			}
 			fmt.Printf(time.Now().Format(time.RFC3339) + " Finished scanning: " + part.FileName() + "\n")
+			return // Process only the first uploaded file to prevent invalid JSON streaming
 		}
 	default:
 		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)

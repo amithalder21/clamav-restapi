@@ -55,6 +55,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 
 	for s := range clamdResponse {
 		writeScanResponse(w, s, req.URL)
+		break
 	}
 	
 	fmt.Printf(time.Now().Format(time.RFC3339)+" Finished scanning URL: %s\n", req.URL)
