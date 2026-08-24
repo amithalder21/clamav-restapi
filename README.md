@@ -25,7 +25,6 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks.
 - **Cloud URL Scanning**: Stream files directly from remote URLs to ClamAV without buffering in memory.
 - **API Key Authentication**: Optional security layer to restrict access.
-- **Prometheus Metrics**: Built-in `/metrics` endpoint.
 - **Admin API**: Secured endpoints to check daemon health, Go runtime metrics, and manually reload the virus database.
 
 ---
