@@ -209,7 +209,6 @@ Below is a complete reference of all available HTTP endpoints exposed by the ser
 | `GET`  | `/admin/status` | Returns ClamAV engine version and internal memory stats. | `ADMIN_API_KEY` |
 | `POST` | `/admin/reload` | Forces ClamAV to hot-reload virus databases from disk to memory. | `ADMIN_API_KEY` |
 | `POST` | `/admin/update-signatures` | Forces `freshclam` to update virus signatures immediately in the background. | `ADMIN_API_KEY` |
-| `GET`  | `/metrics` | Prometheus metrics endpoint. | None |
 
 ## Status Codes
 
@@ -287,12 +286,6 @@ docker run -d \
   -v /path/to/your/cert.key:/etc/ssl/clamav-rest/server.key \
   amithalder/clamav-restapi:latest
 ```
-
-### Prometheus
-
-Prometheus metrics are natively supported and can be scraped via:
-- **HTTP**: `curl http://localhost:9000/metrics`
-- **HTTPS**: `curl https://localhost:9443/metrics`
 
 ## Developing
 
