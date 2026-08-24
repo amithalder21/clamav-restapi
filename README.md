@@ -187,28 +187,29 @@ curl -i -X POST -H "Content-Type: application/json" -d @s3-event.json http://loc
 
 ```mermaid
 sequenceDiagram
-    participant User as User UI/API
+    participant User as User UI / API
     participant S3 as AWS S3 (Quarantine)
     participant SQS as AWS SQS Queue
-    participant ClamAV as ClamAV Fargate Container
-    participant SNS as AWS SNS Topic
-    participant Webhook as Webhook Endpoint
+    participant ClamAV as ClamAV Fargate
+    participant SNS as AWS SNS / EventBridge
+    participant Backend as Security Teams / Webhooks
 
-    User->>S3: 1. Uploads file123.pdf
+    User->>S3: 1. Uploads file123.pdf directly
     S3->>SQS: 2. Pushes "ObjectCreated" event
-    ClamAV->>SQS: 3. Long-polls and pulls SQS message
-    ClamAV->>S3: 4. Streams file for scanning (GetObject w/ VersionId)
-    Note over ClamAV: 5. Analyzes for Malware in-memory
+    ClamAV->>SQS: 3. Pulls SQS message
+    S3->>ClamAV: 4. Streams file for scanning (w/ VersionId)
+    Note over ClamAV: 5. Analyzes for Malware
     ClamAV->>S3: 6. Retrieves existing custom Tags
-    ClamAV->>S3: 7. Merges & Applies Tags: ScanStatus=CLEAN/INFECTED
+    ClamAV->>S3: 7. Applies Tags: ScanStatus=CLEAN/INFECTED
     opt If INFECTED & DELETE_INFECTED_FILES=true
         ClamAV->>S3: 8. Deletes the infected object
     end
     opt If SNS_TOPIC_ARN is set
-        ClamAV->>SNS: 9. Publishes JSON scan result alert
+        ClamAV->>SNS: 9. Broadcasts "FileScanned" result
+        SNS->>Backend: 10. Fan-out events to listening microservices
     end
     opt If SQS_WEBHOOK_URL is set
-        ClamAV->>Webhook: 10. POSTs scan result
+        ClamAV->>Backend: 11. POSTs scan result directly to Webhook
     end
 ```
 
