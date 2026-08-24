@@ -57,6 +57,7 @@ grep -q '"av-status":"CLEAN"' /tmp/out.json && green "  clean file correctly mar
 echo
 
 echo "== 4. /scan — EICAR test virus (expect INFECTED) =="
+echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > eicar.com.txt
 code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/scan" \
   -H "X-API-Key: $API_KEY" -F "file=@eicar.com.txt")
 check "POST /scan EICAR -> 406 (Not Acceptable / INFECTED)" 406 "$code"
@@ -158,4 +159,12 @@ fi
 echo "=============================="
 echo "Results: $PASS passed, $FAIL failed"
 echo "=============================="
-[ "$FAIL" -eq 0 ]
+
+# Cleanup
+rm -f /tmp/clean.txt /tmp/big.bin /tmp/out.json eicar.com.txt
+
+if [ "$FAIL" -eq 0 ]; then
+  exit 0
+else
+  exit 1
+fi
