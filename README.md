@@ -177,13 +177,40 @@ If you prefer to have EventBridge or another service explicitly "push" the S3 Ev
 curl -i -X POST -H "Content-Type: application/json" -d @s3-event.json http://localhost:9000/scan-s3-event
 ```
 
-**S3 Auto-Tagging & Webhook Routing**
-Regardless of which method you use, the scanner will automatically append the following Object Tags to your S3 File once the scan finishes:
-- `av-status`: `CLEAN` or `INFECTED`
-- `av-signature`: `OK` (if clean) or the threat name (e.g. `Eicar-Signature FOUND`)
-- `av-timestamp`: `2026/08/14 06:19:51 UTC`
+**Advanced S3 Integrations**
+- **Non-Destructive S3 Auto-Tagging**: After ClamAV finishes its scan, the API calls `s3.GetObjectTagging` to retrieve your existing tags, safely appends `av-status=CLEAN` (or `INFECTED`), `av-signature`, and `av-timestamp`, and then updates the file. Your custom tags are perfectly preserved!
+- **SNS Security Alerts**: If you provide the `SNS_TOPIC_ARN` variable, the container will instantly push a JSON event containing the scan results directly to an AWS SNS Topic. By turning on `SNS_PUBLISH_INFECTED_ONLY=true`, your team will *only* be alerted when actual malware is found!
+- **Auto-Deletion**: For the ultimate security posture, if you set `DELETE_INFECTED_FILES=true`, the container will automatically call `s3.DeleteObject` the very millisecond a virus is detected. It eliminates the threat immediately before anyone can download it.
+- **Webhook Routing**: To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `SQS_WEBHOOK_URL` environment variable.
 
-*Note: To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `SQS_WEBHOOK_URL` environment variable.*
+### Architecture Diagram
+
+```mermaid
+sequenceDiagram
+    participant User as User UI/API
+    participant S3 as AWS S3 (Quarantine)
+    participant SQS as AWS SQS Queue
+    participant ClamAV as ClamAV Fargate Container
+    participant SNS as AWS SNS Topic
+    participant Webhook as Webhook Endpoint
+
+    User->>S3: 1. Uploads file123.pdf
+    S3->>SQS: 2. Pushes "ObjectCreated" event
+    ClamAV->>SQS: 3. Long-polls and pulls SQS message
+    ClamAV->>S3: 4. Streams file for scanning (GetObject w/ VersionId)
+    Note over ClamAV: 5. Analyzes for Malware in-memory
+    ClamAV->>S3: 6. Retrieves existing custom Tags
+    ClamAV->>S3: 7. Merges & Applies Tags: ScanStatus=CLEAN/INFECTED
+    opt If INFECTED & DELETE_INFECTED_FILES=true
+        ClamAV->>S3: 8. Deletes the infected object
+    end
+    opt If SNS_TOPIC_ARN is set
+        ClamAV->>SNS: 9. Publishes JSON scan result alert
+    end
+    opt If SQS_WEBHOOK_URL is set
+        ClamAV->>Webhook: 10. POSTs scan result
+    end
+```
 
 #### AWS IAM & Security Setup
 
