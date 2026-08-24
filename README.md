@@ -220,8 +220,20 @@ Your ClamAV container running in ECS Fargate needs this **IAM Task Role** to rea
     },
     {
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObject"],
+      "Action": [
+        "s3:GetObject", 
+        "s3:GetObjectVersion", 
+        "s3:GetObjectTagging", 
+        "s3:PutObjectTagging", 
+        "s3:PutObjectVersionTagging", 
+        "s3:DeleteObject"
+      ],
       "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt"],
+      "Resource": "arn:aws:kms:REGION:ACCOUNT_ID:key/YOUR_KMS_KEY_ID"
     },
     {
       "Effect": "Allow",

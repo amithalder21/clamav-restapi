@@ -31,7 +31,8 @@ type S3EventRecord struct {
 			Name string `json:"name"`
 		} `json:"bucket"`
 		Object struct {
-			Key string `json:"key"`
+			Key       string `json:"key"`
+			VersionId string `json:"versionId,omitempty"`
 		} `json:"object"`
 	} `json:"s3"`
 }
@@ -131,13 +132,22 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		
 		bucket := record.S3.Bucket.Name
 		key, _ := url.QueryUnescape(record.S3.Object.Key)
+		versionId := record.S3.Object.VersionId
 
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [%s] Started scanning S3 Object: s3://%s/%s\n", scanID, bucket, key)
+		var versionMsg string
+		if versionId != "" {
+			versionMsg = fmt.Sprintf(" (Version: %s)", versionId)
+		}
+		fmt.Printf(time.Now().Format(time.RFC3339)+" [%s] Started scanning S3 Object: s3://%s/%s%s\n", scanID, bucket, key, versionMsg)
 
 		objReq := &s3.GetObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 		}
+		if versionId != "" {
+			objReq.VersionId = aws.String(versionId)
+		}
+		
 		objResp, err := s3Client.GetObject(context.TODO(), objReq)
 		if err != nil {
 			fmt.Printf("[%s] Failed to fetch object s3://%s/%s: %v\n", scanID, bucket, key, err)
@@ -176,10 +186,15 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 
 		// 3a. Retrieve existing tags to prevent overwriting user tags
 		var finalTags []s3types.Tag
-		existingTagsResp, err := s3Client.GetObjectTagging(context.TODO(), &s3.GetObjectTaggingInput{
+		getTagReq := &s3.GetObjectTaggingInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
-		})
+		}
+		if versionId != "" {
+			getTagReq.VersionId = aws.String(versionId)
+		}
+		
+		existingTagsResp, err := s3Client.GetObjectTagging(context.TODO(), getTagReq)
 		if err == nil && existingTagsResp.TagSet != nil {
 			for _, t := range existingTagsResp.TagSet {
 				if *t.Key != "av-status" && *t.Key != "av-signature" && *t.Key != "av-timestamp" {
@@ -200,6 +215,9 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			Key:     aws.String(key),
 			Tagging: &s3types.Tagging{TagSet: finalTags},
 		}
+		if versionId != "" {
+			tagReq.VersionId = aws.String(versionId)
+		}
 		
 		if _, err := s3Client.PutObjectTagging(context.TODO(), tagReq); err != nil {
 			fmt.Printf("[%s] Failed to tag object s3://%s/%s: %v\n", scanID, bucket, key, err)
@@ -209,10 +227,14 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 
 		// 4. Optionally delete if infected
 		if scanStatus == "INFECTED" && opts["DELETE_INFECTED_FILES"] == "true" {
-			_, err := s3Client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+			delReq := &s3.DeleteObjectInput{
 				Bucket: aws.String(bucket),
 				Key:    aws.String(key),
-			})
+			}
+			if versionId != "" {
+				delReq.VersionId = aws.String(versionId)
+			}
+			_, err := s3Client.DeleteObject(context.TODO(), delReq)
 			if err != nil {
 				fmt.Printf("[%s] Failed to delete infected file s3://%s/%s: %v\n", scanID, bucket, key, err)
 			} else {
