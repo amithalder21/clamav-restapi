@@ -145,8 +145,31 @@ Run the `clamav-restapi` docker image locally passing any configuration variable
 docker run -d \
   -p 9000:9000 \
   -e API_KEY="my-secret-key" \
-  -e MAX_FILE_SIZE="25M" \
+  -e ADMIN_API_KEY="my-admin-key" \
+  -e SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/123/my-queue" \
+  -e SQS_WEBHOOK_URL="https://webhook.site/your-id" \
+  -e DELETE_INFECTED_FILES="false" \
+  -e SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123:my-topic" \
+  -e SNS_PUBLISH_INFECTED_ONLY="true" \
+  -e AWS_REGION="us-east-1" \
+  -e AWS_ACCESS_KEY_ID="AKIA..." \
+  -e AWS_SECRET_ACCESS_KEY="..." \
+  -e AWS_SESSION_TOKEN="..." \
+  -e CLAMD_PORT="tcp://localhost:3310" \
   -e MAX_SCAN_SIZE="100M" \
+  -e MAX_FILE_SIZE="25M" \
+  -e MAX_RECURSION="16" \
+  -e MAX_FILES="10000" \
+  -e MAX_EMBEDDEDPE="10M" \
+  -e MAX_HTMLNORMALIZE="10M" \
+  -e MAX_HTMLNOTAGS="2M" \
+  -e MAX_SCRIPTNORMALIZE="5M" \
+  -e MAX_ZIPTYPERCG="1M" \
+  -e MAX_PARTITIONS="50" \
+  -e MAX_ICONSPE="100" \
+  -e PCRE_MATCHLIMIT="100000" \
+  -e PCRE_RECMATCHLIMIT="2000" \
+  -e SIGNATURE_CHECKS="24" \
   --name clamav-restapi \
   amithalder/clamav-restapi:alpine-latest
 ```
@@ -174,6 +197,9 @@ Passes a URL to the API. The API will stream the file directly to ClamAV without
 curl -i -X POST -H "Content-Type: application/json" \
   -d '{"url":"https://secure.eicar.org/eicar.com.txt"}' \
   http://localhost:9000/scan-url
+
+HTTP/1.1 406 Not Acceptable
+{ "filename": "https://secure.eicar.org/eicar.com.txt", "av-status": "INFECTED", "av-signature": "Eicar-Test-Signature", "av-timestamp": "2026/08/25 02:00:11 UTC" }
 ```
 
 ### 3. Asynchronous Scanning (Webhooks)
