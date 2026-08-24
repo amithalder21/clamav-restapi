@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/dutchcoders/go-clamd"
 )
@@ -18,9 +19,10 @@ func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
 // ScanResponse is the standard response payload for all scan endpoints
 type ScanResponse struct {
 	Filename    string `json:"filename,omitempty"`
-	Status      string `json:"status"`
-	Description string `json:"description"`
 	ScanID      string `json:"scan_id,omitempty"`
+	Status      string `json:"av-status"`
+	Description string `json:"av-signature"`
+	Timestamp   string `json:"av-timestamp"`
 }
 
 // formatStatus normalizes the raw ClamAV status into a consistent API status
@@ -53,28 +55,38 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 	}
 	
 	normalizedStatus := formatStatus(s.Status)
+	signature := s.Description
+	if signature == "" {
+		signature = "CLEAN"
+	}
 	
 	json.NewEncoder(w).Encode(ScanResponse{
 		Filename:    filename,
 		Status:      normalizedStatus,
-		Description: s.Description,
+		Description: signature,
+		Timestamp:   time.Now().UTC().Format("2006/01/02 15:04:05 UTC"),
 	})
 	
 	slog.Info("Scan result",
 		slog.String("filename", filename),
 		slog.String("result", normalizedStatus),
-		slog.String("description", s.Description),
+		slog.String("description", signature),
 	)
 }
 
 // formatScanResponse returns the JSON string and HTTP status code without writing to a ResponseWriter (useful for webhooks)
 func formatScanResponse(s *clamd.ScanResult, scanID string, filename string) (string, int) {
 	normalizedStatus := formatStatus(s.Status)
+	signature := s.Description
+	if signature == "" {
+		signature = "CLEAN"
+	}
 	respBytes, _ := json.Marshal(ScanResponse{
 		Filename:    filename,
-		Status:      normalizedStatus,
-		Description: s.Description,
 		ScanID:      scanID,
+		Status:      normalizedStatus,
+		Description: signature,
+		Timestamp:   time.Now().UTC().Format("2006/01/02 15:04:05 UTC"),
 	})
 	respJson := string(respBytes)
 	statusCode := http.StatusNotImplemented
