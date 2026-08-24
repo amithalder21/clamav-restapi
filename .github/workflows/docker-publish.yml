@@ -48,7 +48,9 @@ jobs:
           push: true
           tags: |
             amithalder/clamav-restapi:latest
+            amithalder/clamav-restapi:alpine-latest
             amithalder/clamav-restapi:${{ steps.tag_version.outputs.new_tag }}
+            amithalder/clamav-restapi:alpine-${{ steps.tag_version.outputs.new_tag }}
             
       - name: Build and push Rocky Linux Image
         uses: docker/build-push-action@v5

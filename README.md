@@ -32,7 +32,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 You can pull the pre-built, automatically updated Docker image directly from Docker Hub:
 
 ```bash
-docker pull amithalder/clamav-restapi:latest
+docker pull amithalder/clamav-restapi:alpine-latest
 ```
 
 *(Alternatively, to use the Rocky Linux variant, pull `amithalder/clamav-restapi:rocky-latest`)*
@@ -41,7 +41,7 @@ docker pull amithalder/clamav-restapi:latest
 
 Run the `clamav-restapi` docker image locally:
 ```bash
-docker run -d -p 9000:9000 -p 9443:9443 --name clamav-restapi amithalder/clamav-restapi:latest
+docker run -d -p 9000:9000 -p 9443:9443 --name clamav-restapi amithalder/clamav-restapi:alpine-latest
 ```
 
 If you are deploying this on **AWS ECS Fargate** or want to configure it locally with custom limits and API keys, you can pass environment variables using `-e`:
@@ -68,7 +68,7 @@ docker run -d \
   -e PCRE_RECMATCHLIMIT="2000" \
   -e SIGNATURE_CHECKS="24" \
   --name clamav-restapi \
-  amithalder/clamav-restapi:latest
+  amithalder/clamav-restapi:alpine-latest
 ```
 
 **Using the Rocky Linux (CentOS) image (`rocky-latest`):**
@@ -284,7 +284,7 @@ docker run -d \
   -p 9443:9443 \
   -v /path/to/your/cert.crt:/etc/ssl/clamav-rest/server.crt \
   -v /path/to/your/cert.key:/etc/ssl/clamav-rest/server.key \
-  amithalder/clamav-restapi:latest
+  amithalder/clamav-restapi:alpine-latest
 ```
 
 ## Developing
@@ -297,8 +297,8 @@ go build -v .
 
 To test the locally built Docker image:
 ```bash
-docker build -t amithalder/clamav-restapi:latest .
-docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi amithalder/clamav-restapi:latest
+docker build -t amithalder/clamav-restapi:alpine-latest .
+docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi amithalder/clamav-restapi:alpine-latest
 ```
 
 ## References
