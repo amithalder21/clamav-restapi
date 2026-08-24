@@ -22,10 +22,89 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 ## Features
 
 - **Event-Driven AWS Architecture**: Natively integrates with AWS S3, SQS, and EventBridge to perform Zero-HTTP polling, native S3 streaming, and S3 Object Auto-Tagging (`av-status`, `av-signature`).
+- **Advanced S3 Security**: Automatically streams files from S3 without saving to disk, non-destructively merges existing tags with virus results (`av-status`, `av-signature`), actively deletes infected files, and alerts security teams via AWS SNS.
 - **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks.
 - **Cloud URL Scanning**: Stream files directly from remote URLs to ClamAV without buffering in memory.
 - **API Key Authentication**: Optional security layer to restrict access.
 - **Prometheus Metrics**: Built-in `/metrics` endpoint.
+- **Admin API**: Secured endpoints to check daemon health, Go runtime metrics, and manually reload the virus database.
+
+## Comprehensive System Architecture
+
+This flowchart maps out every single API endpoint, background worker, and AWS integration that the container supports:
+
+```mermaid
+flowchart TB
+    %% External Entities
+    UserClient([Client Apps / Scripts])
+    EventBridge([AWS EventBridge])
+    AWS_SQS[(AWS SQS Queue)]
+    AWS_S3[(AWS S3 Bucket)]
+    Webhooks([Webhook Endpoints])
+    SNS([AWS SNS Topics])
+
+    %% Main Container Group
+    subgraph Fargate[ClamAV REST API (Docker Container)]
+        direction TB
+        
+        %% Standard Endpoints
+        EP_Scan["POST /scan"]
+        EP_ScanAsync["POST /scan-async"]
+        EP_ScanUrl["POST /scan-url-async"]
+        EP_ScanPath["GET /scanPath"]
+        
+        %% S3 Event Endpoints
+        EP_ScanS3["POST /scan-s3-event"]
+        SQSPoller[["Background SQS Poller"]]
+        
+        %% Admin Endpoints
+        subgraph AdminAPI[Admin API (Requires X-API-Key)]
+            EP_Status["GET /admin/status"]
+            EP_Reload["GET /admin/reload"]
+        end
+
+        %% Core Engine
+        ClamDaemon((ClamAV Daemon))
+    end
+
+    %% Ingress Data Flows
+    UserClient -- "Multipart File" --> EP_Scan
+    UserClient -- "Multipart File" --> EP_ScanAsync
+    UserClient -- "JSON URL" --> EP_ScanUrl
+    UserClient -- "Local Path" --> EP_ScanPath
+    UserClient -- "Status Check" --> AdminAPI
+
+    %% S3 Event Data Flows
+    AWS_S3 -- "ObjectCreated Event" --> AWS_SQS
+    AWS_SQS -- "Long-Polls for Events" --> SQSPoller
+    EventBridge -- "HTTP Push S3 Event" --> EP_ScanS3
+
+    %% Internal Processing
+    EP_Scan --> ClamDaemon
+    EP_ScanPath --> ClamDaemon
+    EP_ScanAsync --> ClamDaemon
+    EP_ScanUrl -. "Downloads File" .-> ClamDaemon
+    EP_ScanS3 -. "Streams directly" .-> ClamDaemon
+    SQSPoller -. "Streams directly" .-> ClamDaemon
+    AdminAPI -. "Manages Engine" .-> ClamDaemon
+
+    %% Sync Outputs
+    EP_Scan -- "Sync JSON Result" --> UserClient
+    EP_ScanPath -- "Sync JSON Result" --> UserClient
+    AdminAPI -- "Sync JSON Result" --> UserClient
+    
+    %% Async Outputs (Webhooks)
+    EP_ScanAsync -- "POST Result" --> Webhooks
+    EP_ScanUrl -- "POST Result" --> Webhooks
+    EP_ScanS3 -- "POST Result" --> Webhooks
+    SQSPoller -- "POST Result" --> Webhooks
+    
+    %% AWS Outputs (S3 / SNS)
+    SQSPoller -- "Applies Tags / Deletes INFECTED" --> AWS_S3
+    EP_ScanS3 -- "Applies Tags / Deletes INFECTED" --> AWS_S3
+    SQSPoller -- "Publishes JSON Alert" --> SNS
+    EP_ScanS3 -- "Publishes JSON Alert" --> SNS
+```
 
 ## Installation
 
