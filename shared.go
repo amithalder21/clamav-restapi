@@ -23,6 +23,18 @@ type ScanResponse struct {
 	ScanID      string `json:"scan_id,omitempty"`
 }
 
+// formatStatus normalizes the raw ClamAV status into a consistent API status
+func formatStatus(status string) string {
+	switch status {
+	case clamd.RES_OK:
+		return "CLEAN"
+	case clamd.RES_FOUND:
+		return "INFECTED"
+	default:
+		return status
+	}
+}
+
 // writeScanResponse writes a standardized JSON response and status code
 func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -40,24 +52,27 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 		w.WriteHeader(http.StatusNotImplemented)
 	}
 	
+	normalizedStatus := formatStatus(s.Status)
+	
 	json.NewEncoder(w).Encode(ScanResponse{
 		Filename:    filename,
-		Status:      s.Status,
+		Status:      normalizedStatus,
 		Description: s.Description,
 	})
 	
 	slog.Info("Scan result",
 		slog.String("filename", filename),
-		slog.String("result", s.Status),
+		slog.String("result", normalizedStatus),
 		slog.String("description", s.Description),
 	)
 }
 
 // formatScanResponse returns the JSON string and HTTP status code without writing to a ResponseWriter (useful for webhooks)
 func formatScanResponse(s *clamd.ScanResult, scanID string, filename string) (string, int) {
+	normalizedStatus := formatStatus(s.Status)
 	respBytes, _ := json.Marshal(ScanResponse{
 		Filename:    filename,
-		Status:      s.Status,
+		Status:      normalizedStatus,
 		Description: s.Description,
 		ScanID:      scanID,
 	})

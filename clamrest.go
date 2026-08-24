@@ -100,7 +100,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			for s := range response {
 				slog.Info("Finished scanning file", 
 					slog.String("filename", part.FileName()),
-					slog.String("result", s.Status),
+					slog.String("result", formatStatus(s.Status)),
 					slog.String("description", s.Description),
 					slog.Duration("duration_ms", time.Since(start)),
 				)

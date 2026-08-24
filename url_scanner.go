@@ -61,7 +61,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	for s := range clamdResponse {
 		slog.Info("Finished scanning URL", 
 			slog.String("url", req.URL), 
-			slog.String("result", s.Status), 
+			slog.String("result", formatStatus(s.Status)), 
 			slog.String("description", s.Description),
 			slog.Duration("duration_ms", time.Since(start)),
 		)

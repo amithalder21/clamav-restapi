@@ -101,7 +101,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Info("Finished scanning URL", 
 				slog.String("scan_id", scanID), 
 				slog.String("url", req.URL), 
-				slog.String("result", s.Status), 
+				slog.String("result", formatStatus(s.Status)), 
 				slog.String("description", s.Description),
 				slog.Duration("duration_ms", time.Since(start)),
 			)
@@ -182,7 +182,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Info("Finished scanning", 
 				slog.String("scan_id", scanID), 
 				slog.String("filename", originalName), 
-				slog.String("result", s.Status), 
+				slog.String("result", formatStatus(s.Status)), 
 				slog.String("description", s.Description),
 				slog.Duration("duration_ms", time.Since(start)),
 			)
