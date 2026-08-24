@@ -5,16 +5,35 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/dutchcoders/go-clamd"
 )
 
+var apiStartTime = time.Now()
+
+type AdminClamAVInfo struct {
+	EngineVersion    string `json:"engine_version"`
+	SignatureVersion string `json:"signature_version"`
+	SignatureDate    string `json:"signature_date"`
+}
+
+type AdminGoMetrics struct {
+	UptimeSeconds     int     `json:"uptime_seconds"`
+	UptimeHuman       string  `json:"uptime_human"`
+	Goroutines        int     `json:"goroutines"`
+	MemoryAllocatedMB float64 `json:"memory_allocated_mb"`
+}
+
 type AdminStatusResponse struct {
-	Version string       `json:"version"`
-	Stats   *clamd.Stats `json:"stats,omitempty"`
-	Error   string       `json:"error,omitempty"`
+	RawVersion string            `json:"raw_version"`
+	ClamAV     AdminClamAVInfo   `json:"clamav"`
+	Stats      *clamd.Stats      `json:"stats,omitempty"`
+	Config     map[string]string `json:"config"`
+	GoMetrics  AdminGoMetrics    `json:"go_metrics"`
+	Error      string            `json:"error,omitempty"`
 }
 
 type AdminGenericResponse struct {
@@ -42,8 +61,17 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 		versionStr += v.Raw
 	}
 
-	stats, _ := c.Stats()
+	var clamavInfo AdminClamAVInfo
+	parts := strings.Split(versionStr, "/")
+	if len(parts) >= 3 {
+		clamavInfo.EngineVersion = strings.TrimSpace(strings.TrimPrefix(parts[0], "ClamAV "))
+		clamavInfo.SignatureVersion = strings.TrimSpace(parts[1])
+		clamavInfo.SignatureDate = strings.TrimSpace(strings.Join(parts[2:], "/"))
+	} else {
+		clamavInfo.EngineVersion = versionStr
+	}
 
+	stats, _ := c.Stats()
 	if stats != nil {
 		stats.State = strings.TrimSpace(strings.TrimPrefix(stats.State, "STATE:"))
 		stats.Threads = strings.TrimSpace(strings.TrimPrefix(stats.Threads, "THREADS:"))
@@ -51,10 +79,31 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 		stats.Queue = strings.TrimSpace(strings.TrimPrefix(stats.Queue, "QUEUE:"))
 	}
 
+	safeConfig := make(map[string]string)
+	for k, v := range opts {
+		if strings.HasPrefix(k, "MAX_") || strings.HasPrefix(k, "PCRE_") || strings.HasPrefix(k, "SIGNATURE_") || k == "PORT" || k == "CLAMD_PORT" {
+			safeConfig[k] = v
+		}
+	}
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	uptime := time.Since(apiStartTime)
+	
+	goMetrics := AdminGoMetrics{
+		UptimeSeconds:     int(uptime.Seconds()),
+		UptimeHuman:       uptime.Round(time.Second).String(),
+		Goroutines:        runtime.NumGoroutine(),
+		MemoryAllocatedMB: float64(m.Alloc) / 1024 / 1024,
+	}
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(AdminStatusResponse{
-		Version: versionStr,
-		Stats:   stats,
+		RawVersion: versionStr,
+		ClamAV:     clamavInfo,
+		Stats:      stats,
+		Config:     safeConfig,
+		GoMetrics:  goMetrics,
 	})
 }
 
