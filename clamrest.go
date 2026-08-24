@@ -22,7 +22,7 @@ func init() {
 
 func home(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		writeJSONError(w, "Not Found", http.StatusNotFound)
 		return
 	}
 
@@ -96,7 +96,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 		reader, err := r.MultipartReader()
 
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -121,7 +121,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf(time.Now().Format(time.RFC3339) + " Finished scanning: " + part.FileName() + "\n")
 		}
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
 

@@ -15,18 +15,18 @@ type URLScanRequest struct {
 
 func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req URLScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		writeJSONError(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
 
 	if req.URL == "" {
-		http.Error(w, "URL is required", http.StatusBadRequest)
+		writeJSONError(w, "URL is required", http.StatusBadRequest)
 		return
 	}
 
@@ -34,13 +34,13 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := http.Get(req.URL)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch URL: %v", err), http.StatusBadRequest)
+		writeJSONError(w, fmt.Sprintf("Failed to fetch URL: %v", err), http.StatusBadRequest)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode), http.StatusBadRequest)
+		writeJSONError(w, fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode), http.StatusBadRequest)
 		return
 	}
 
@@ -49,7 +49,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	clamdResponse, err := c.ScanStream(resp.Body, abort)
 	
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

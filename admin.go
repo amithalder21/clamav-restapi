@@ -23,7 +23,7 @@ type AdminGenericResponse struct {
 
 func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -52,7 +52,7 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 func adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -75,7 +75,7 @@ func adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 
 func adminUpdateSignaturesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 

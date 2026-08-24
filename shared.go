@@ -1,12 +1,20 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/dutchcoders/go-clamd"
 )
+
+// writeJSONError writes a standard JSON error response
+func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
 
 // writeScanResponse writes the backward-compatible JSON response and status code
 func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename string) {

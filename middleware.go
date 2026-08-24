@@ -16,7 +16,7 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 			// Allow either simple key or Bearer token
 			if reqKey != apiKey && reqKey != "Bearer "+apiKey {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 		}
@@ -31,7 +31,7 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		adminKey := os.Getenv("ADMIN_API_KEY")
 		if adminKey == "" {
 			// Fail secure: if no key is configured, admin endpoints do not exist.
-			http.NotFound(w, r)
+			writeJSONError(w, "Admin API is disabled", http.StatusNotFound)
 			return
 		}
 
@@ -41,7 +41,7 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if reqKey != adminKey && reqKey != "Bearer "+adminKey {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeJSONError(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 

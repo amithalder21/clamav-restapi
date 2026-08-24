@@ -48,11 +48,11 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req AsyncURLScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		writeJSONError(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	if req.URL == "" {
-		http.Error(w, "URL is required", http.StatusBadRequest)
+	if req.URL == "" || req.WebhookURL == "" {
+		writeJSONError(w, "URL and webhook_url are required", http.StatusBadRequest)
 		return
 	}
 
@@ -99,32 +99,31 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := r.ParseMultipartForm(32 << 20) // 32MB limit in memory
+	err := r.ParseMultipartForm(32 << 20) // 32MB max in-memory
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	webhookURL := r.FormValue("webhook_url")
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "Missing 'file' field", http.StatusBadRequest)
+		writeJSONError(w, "Missing 'file' field", http.StatusBadRequest)
 		return
 	}
 	
 	// Create a temp file to hold the upload so we can return HTTP 202 immediately and free the connection
-	tempFile, err := os.CreateTemp("", "upload-*.tmp")
+	tempFile, err := os.CreateTemp("", "clamav-async-upload-*")
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	
 	_, err = io.Copy(tempFile, file)
 	file.Close()
 	if err != nil {
-		tempFile.Close()
 		os.Remove(tempFile.Name())
-		http.Error(w, "Failed to save file", http.StatusInternalServerError)
+		writeJSONError(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
 	tempFile.Close() // close it for now, we will open it in the goroutine
