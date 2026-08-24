@@ -421,21 +421,51 @@ docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi amithalder/clama
 
 This project includes a full Docker Compose test rig that spins up the API, a mock webhook receiver, and LocalStack (for S3 and SQS testing). It allows you to run end-to-end regression tests locally, ensuring features like async scanning, SQS event polling, S3 object tagging, and SSRF protections work properly.
 
-To run the full integration suite:
+#### What it spins up
+- **LocalStack** — fake S3 + SQS + SNS on `http://localhost:4566`. The init script auto-creates an S3 bucket (`clamrest-uploads`), an SQS queue (`clamrest-scan-queue`) wired to receive `ObjectCreated` events from that bucket, and an SNS topic (`clamrest-scan-results`).
+- **webhook-receiver** — a tiny Python listener on `:8080` that logs every webhook POST the app sends it, so you can verify `/scan-async`, `/scan-url-async`, and S3-triggered scans actually deliver results.
+- **clamav-rest** — your app, built from the existing `Dockerfile`, pointed at LocalStack via `AWS_ENDPOINT_URL` and dummy credentials.
+
+#### Running the Test Suite
 
 ```bash
 # 1. Spin up the local test environment (API, LocalStack, Webhook Receiver)
 docker compose -f docker-compose.local.yml up --build -d
 
-# 2. Run the automated test script
+# 2. Watch it come healthy (clamd + freshclam take ~30-60s on first boot)
+docker compose -f docker-compose.local.yml logs -f clamav-rest
+
+# 3. Run the automated test script
 chmod +x test-endpoints.sh
 ./test-endpoints.sh
 
-# 3. Tear down the environment when finished
+# 4. Tear down the environment when finished
 docker compose -f docker-compose.local.yml down -v
 ```
 
-See [test-rig-local/README-LOCAL-TESTING.md](test-rig-local/README-LOCAL-TESTING.md) for more details.
+#### What the test script covers
+
+| # | Endpoint | What it checks |
+|---|----------|-----------------|
+| 1 | `GET /` | health check |
+| 2 | `POST /scan-url` | unauthenticated request rejected (401) |
+| 3 | `POST /scan` | clean file → CLEAN |
+| 4 | `POST /scan` | EICAR test string → INFECTED (406) |
+| 5 | `POST /scan` | 101MB upload rejected (413) — the DoS fix |
+| 6 | `GET /scanPath` | `../../etc/passwd` blocked (403) — path traversal fix |
+| 7 | `POST /scan-url` | `169.254.169.254` (cloud metadata) blocked (400) — SSRF fix |
+| 8 | `POST /scan-url` | legitimate external URL scans successfully |
+| 9 | `POST /scan-async` | EICAR upload → 202, webhook receives INFECTED result |
+| 10 | `POST /scan-url-async` | same, via URL fetch |
+| 11 | `GET /admin/status` | wrong admin key → 403, correct key → 200 |
+| 12 | S3 upload → SQS → scan → tag → webhook | full async pipeline |
+
+#### Running the Go unit tests
+
+The repo's own unit tests (covering SSRF + path traversal) can run directly against the Go toolchain without Docker:
+```bash
+go test ./... -v
+```
 
 ## References
 - https://www.clamav.net
