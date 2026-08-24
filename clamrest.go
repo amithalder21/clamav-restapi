@@ -86,11 +86,21 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	//POST takes the uploaded file(s) and saves it to disk.
 	case "POST":
+		maxFileSizeBytes := parseSize(opts["MAX_FILE_SIZE"])
+		if maxFileSizeBytes == 0 {
+			maxFileSizeBytes = 100 * 1024 * 1024 // default 100M
+		}
+		// Bound the stream length to the MAX_FILE_SIZE + 1MB overhead
+		r.Body = http.MaxBytesReader(w, r.Body, maxFileSizeBytes + 1024*1024)
+
 		c := clamd.NewClamd(opts["CLAMD_PORT"])
 		//get the multipart reader for the request.
 		reader, err := r.MultipartReader()
 
 		if err != nil {
+			if checkMaxBytesError(w, err) {
+				return
+			}
 			slog.Error("Failed to parse multipart form", slog.Any("error", err))
 			writeJSONError(w, "Failed to process file upload", http.StatusInternalServerError)
 			return

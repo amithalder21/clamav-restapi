@@ -115,10 +115,10 @@ Below is the complete list of available environment variables that can be used t
 | `AWS_SESSION_TOKEN` | Your AWS Session Token. Not required if using standard IAM User or Task Role. |
 | `CLAMD_PORT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `SCAN_BASE_DIR` | Secures `/scanPath` by strictly restricting path traversal outside this mount directory. Default `/tmp`. |
-| `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
-| `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |
-| `MAX_RECURSION` | How many nested archives to scan - Default `16` |
-| `MAX_FILES` | Number of files to scan within an archive - Default `10000` |
+| `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `200M` |
+| `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `100M` |
+| `MAX_RECURSION` | How many nested archives to scan - Default `32` |
+| `MAX_FILES` | Max number of files to extract from archives - Default `50000` |
 | `MAX_EMBEDDEDPE` | Maximum file size for embedded PE - Default `10M` |
 | `MAX_HTMLNORMALIZE` | Maximum size of HTML to normalize - Default `10M` |
 | `MAX_HTMLNOTAGS` | Maximum size of Normalized HTML File to scan - Default `2M` |

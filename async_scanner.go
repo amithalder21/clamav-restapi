@@ -122,7 +122,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 
 	maxFileSizeBytes := parseSize(opts["MAX_FILE_SIZE"])
 	if maxFileSizeBytes == 0 {
-		maxFileSizeBytes = 25 * 1024 * 1024 // default 25M
+		maxFileSizeBytes = 100 * 1024 * 1024 // default 100M
 	}
 	// Add 1MB overhead for multipart boundaries
 	r.Body = http.MaxBytesReader(w, r.Body, maxFileSizeBytes + 1024*1024)
