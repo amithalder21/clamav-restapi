@@ -135,6 +135,22 @@ Forces `freshclam` to execute immediately in the background, downloading the abs
 curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/admin/update-signatures
 ```
 
+## API Routes Reference
+
+Below is a complete reference of all available HTTP endpoints exposed by the service.
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/scan` | Scans a file uploaded via `multipart/form-data` (`file` field). | `API_KEY` (if set) |
+| `GET`  | `/scanPath` | Scans a local file already residing on the container's disk (`?path=/tmp/file`). | `API_KEY` (if set) |
+| `POST` | `/scan-url` | Scans a file by streaming it from a remote URL. Payload: `{"url":"..."}`. | `API_KEY` (if set) |
+| `POST` | `/scan-async` | Asynchronously scans an uploaded file. Requires `file` and `webhook_url` form fields. | `API_KEY` (if set) |
+| `POST` | `/scan-url-async` | Asynchronously scans a URL. Payload: `{"url":"...", "webhook_url":"..."}`. | `API_KEY` (if set) |
+| `GET`  | `/admin/status` | Returns ClamAV engine version and internal memory stats. | `ADMIN_API_KEY` |
+| `POST` | `/admin/reload` | Forces ClamAV to hot-reload virus databases from disk to memory. | `ADMIN_API_KEY` |
+| `POST` | `/admin/update-signatures` | Forces `freshclam` to update virus signatures immediately in the background. | `ADMIN_API_KEY` |
+| `GET`  | `/metrics` | Prometheus metrics endpoint. | None |
+
 ## Status Codes
 
 The API strictly adheres to the following status codes for all scan endpoints and webhook payloads:
