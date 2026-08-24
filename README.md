@@ -12,6 +12,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
     - [Synchronous File Scan](#synchronous-file-scan)
     - [Synchronous URL Scan](#synchronous-url-scan)
     - [Asynchronous Scanning (Webhooks)](#asynchronous-scanning-webhooks)
+- [Admin API](#admin-api)
 - [Status Codes](#status-codes)
 - [Authentication](#authentication)
 - [Configuration](#configuration)
@@ -110,6 +111,30 @@ curl -i -X POST -H "Content-Type: application/json" \
   http://localhost:9000/scan-url-async
 ```
 
+## Admin API
+
+To allow cluster administrators to manage the running ClamAV daemon, we provide a set of administrative endpoints. 
+
+> **Important Security Note:** The Admin API is **disabled by default**. To enable it, you must start the container with the `ADMIN_API_KEY` environment variable. This key must then be provided via the `X-API-Key` or `Authorization` header for all `/admin/*` endpoints.
+
+### 1. Get Daemon Status
+Returns the current ClamAV engine version and internal memory statistics.
+```bash
+curl -H "X-API-Key: your-admin-key" http://localhost:9000/admin/status
+```
+
+### 2. Reload Virus Database
+Forces the ClamAV daemon to reload its virus database from disk into memory without restarting the container.
+```bash
+curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/admin/reload
+```
+
+### 3. Update Signatures
+Forces `freshclam` to execute immediately in the background, downloading the absolute latest virus definitions from the internet.
+```bash
+curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/admin/update-signatures
+```
+
 ## Status Codes
 
 The API strictly adheres to the following status codes for all scan endpoints and webhook payloads:
@@ -141,6 +166,7 @@ Below is the complete list of available options that can be used to customize yo
 | Parameter | Description |
 |-----------|-------------|
 | `API_KEY` | Secures the REST API with a required API key. |
+| `ADMIN_API_KEY` | Enables and secures the `/admin/*` REST endpoints. |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |
 | `MAX_RECURSION` | How many nested archives to scan - Default `16` |

@@ -23,3 +23,28 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		next.ServeHTTP(w, r)
 	}
 }
+
+// AdminAuthMiddleware strictly requires the ADMIN_API_KEY environment variable to be set.
+// If it is not set, the endpoints are completely disabled (404).
+func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		adminKey := os.Getenv("ADMIN_API_KEY")
+		if adminKey == "" {
+			// Fail secure: if no key is configured, admin endpoints do not exist.
+			http.NotFound(w, r)
+			return
+		}
+
+		reqKey := r.Header.Get("X-API-Key")
+		if reqKey == "" {
+			reqKey = r.Header.Get("Authorization")
+		}
+
+		if reqKey != adminKey && reqKey != "Bearer "+adminKey {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}

@@ -170,6 +170,12 @@ func main() {
 	http.HandleFunc("/scan-url", AuthMiddleware(scanURLHandler))
 	http.HandleFunc("/scan-async", AuthMiddleware(scanAsyncHandler))
 	http.HandleFunc("/scan-url-async", AuthMiddleware(scanURLAsyncHandler))
+	
+	// Admin Endpoints
+	http.HandleFunc("/admin/status", AdminAuthMiddleware(adminStatusHandler))
+	http.HandleFunc("/admin/reload", AdminAuthMiddleware(adminReloadHandler))
+	http.HandleFunc("/admin/update-signatures", AdminAuthMiddleware(adminUpdateSignaturesHandler))
+	
 	http.HandleFunc("/", home)
 
 	// Prometheus metrics
