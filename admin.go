@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/dutchcoders/go-clamd"
@@ -42,6 +43,13 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stats, _ := c.Stats()
+
+	if stats != nil {
+		stats.State = strings.TrimSpace(strings.TrimPrefix(stats.State, "STATE:"))
+		stats.Threads = strings.TrimSpace(strings.TrimPrefix(stats.Threads, "THREADS:"))
+		stats.Memstats = strings.TrimSpace(strings.TrimPrefix(stats.Memstats, "MEMSTATS:"))
+		stats.Queue = strings.TrimSpace(strings.TrimPrefix(stats.Queue, "QUEUE:"))
+	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(AdminStatusResponse{
