@@ -45,7 +45,7 @@ RUN freshclam --quiet --no-dns
 
 # Copy binary and certs
 COPY --from=builder /src/clamav-rest /usr/bin/
-COPY ./server.* /etc/ssl/clamav-rest/
+COPY ssl/server.* /etc/ssl/clamav-rest/
 COPY entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/entrypoint.sh
 
