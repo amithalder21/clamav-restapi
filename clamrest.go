@@ -70,7 +70,8 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 	response, err := c.AllMatchScanFile(targetPath)
 
 	if err != nil {
-		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("ClamAV scan failed", slog.Any("error", err))
+		writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
 		return
 	}
 
@@ -90,7 +91,8 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 		reader, err := r.MultipartReader()
 
 		if err != nil {
-			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+			slog.Error("Failed to parse multipart form", slog.Any("error", err))
+			writeJSONError(w, "Failed to process file upload", http.StatusInternalServerError)
 			return
 		}
 
@@ -111,8 +113,8 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			var abort chan bool
 			response, err := c.ScanStream(part, abort)
 			if err != nil {
-				slog.Error("ScanStream error", slog.String("filename", part.FileName()), slog.Any("error", err))
-				writeJSONError(w, err.Error(), http.StatusInternalServerError)
+				slog.Error("ScanStream error", slog.Any("error", err))
+				writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
 				return
 			}
 			

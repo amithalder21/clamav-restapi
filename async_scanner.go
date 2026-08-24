@@ -118,7 +118,8 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseMultipartForm(32 << 20) // 32MB max in-memory
 	if err != nil {
-		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		slog.Error("Failed to parse multipart form", slog.Any("error", err))
+		writeJSONError(w, "Failed to process file upload", http.StatusBadRequest)
 		return
 	}
 

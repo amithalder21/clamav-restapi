@@ -54,7 +54,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	
 	if err != nil {
 		slog.Error("ScanStream error", slog.String("url", req.URL), slog.Any("error", err))
-		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
 		return
 	}
 

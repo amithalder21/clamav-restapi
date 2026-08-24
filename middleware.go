@@ -1,25 +1,34 @@
 package main
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"os"
 )
 
-// AuthMiddleware requires an API key if the API_KEY environment variable is set.
+// AuthMiddleware requires an API key to be set via the API_KEY environment variable.
+// If it is not set, it fails closed to prevent unauthenticated access.
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := os.Getenv("API_KEY")
-		if apiKey != "" {
-			reqKey := r.Header.Get("X-API-Key")
-			if reqKey == "" {
-				reqKey = r.Header.Get("Authorization")
-			}
-			// Allow either simple key or Bearer token
-			if reqKey != apiKey && reqKey != "Bearer "+apiKey {
-				writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
+		if apiKey == "" {
+			writeJSONError(w, "API is disabled (API_KEY not configured)", http.StatusForbidden)
+			return
 		}
+
+		reqKey := r.Header.Get("X-API-Key")
+		if reqKey == "" {
+			reqKey = r.Header.Get("Authorization")
+		}
+
+		match1 := subtle.ConstantTimeCompare([]byte(reqKey), []byte(apiKey)) == 1
+		match2 := subtle.ConstantTimeCompare([]byte(reqKey), []byte("Bearer "+apiKey)) == 1
+
+		if !match1 && !match2 {
+			writeJSONError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	}
 }
@@ -40,7 +49,10 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			reqKey = r.Header.Get("Authorization")
 		}
 
-		if reqKey != adminKey && reqKey != "Bearer "+adminKey {
+		match1 := subtle.ConstantTimeCompare([]byte(reqKey), []byte(adminKey)) == 1
+		match2 := subtle.ConstantTimeCompare([]byte(reqKey), []byte("Bearer "+adminKey)) == 1
+
+		if !match1 && !match2 {
 			writeJSONError(w, "Forbidden", http.StatusForbidden)
 			return
 		}
