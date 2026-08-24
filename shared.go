@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -101,4 +105,63 @@ func formatScanResponse(s *clamd.ScanResult, scanID string, filename string) (st
 		statusCode = http.StatusPreconditionFailed
 	}
 	return respJson, statusCode
+}
+
+// isPrivateIP checks if an IP belongs to private, loopback, link-local or unspecified ranges
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified()
+}
+
+// SafeHTTPClient returns an http.Client that prevents Server-Side Request Forgery (SSRF)
+// by refusing to connect to any internal/private IP addresses.
+func SafeHTTPClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+
+			ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			if err != nil {
+				return nil, err
+			}
+
+			if len(ips) == 0 {
+				return nil, errors.New("no IP addresses found for host")
+			}
+
+			// Pre-flight check to strictly block SSRF payload targets
+			for _, ip := range ips {
+				if isPrivateIP(ip) {
+					return nil, fmt.Errorf("SSRF blocked: attempt to connect to private/internal IP: %s", ip.String())
+				}
+			}
+
+			// Connect securely to the validated IP to prevent DNS rebinding
+			for _, ip := range ips {
+				if !isPrivateIP(ip) {
+					safeAddr := net.JoinHostPort(ip.String(), port)
+					return dialer.DialContext(ctx, network, safeAddr)
+				}
+			}
+			return nil, errors.New("no public IP addresses found")
+		},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Minute, // Max 5 minutes for downloading large files
+	}
 }

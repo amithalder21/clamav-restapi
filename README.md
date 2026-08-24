@@ -114,6 +114,7 @@ Below is the complete list of available environment variables that can be used t
 | `AWS_SECRET_ACCESS_KEY` | Your AWS Secret Key. Not required if running inside ECS Fargate with a Task Role. |
 | `AWS_SESSION_TOKEN` | Your AWS Session Token. Not required if using standard IAM User or Task Role. |
 | `CLAMD_PORT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
+| `SCAN_BASE_DIR` | Secures `/scanPath` by strictly restricting path traversal outside this mount directory. Default `/tmp`. |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |
 | `MAX_RECURSION` | How many nested archives to scan - Default `16` |

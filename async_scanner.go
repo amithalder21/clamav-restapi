@@ -32,9 +32,9 @@ func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string, filename
 	payload, _ := formatScanResponse(s, scanID, filename)
 	// We run this in a fire-and-forget goroutine to avoid blocking the clamd stream processing
 	go func() {
-		resp, err := http.Post(webhookURL, "application/json", bytes.NewBufferString(payload))
+		resp, err := SafeHTTPClient().Post(webhookURL, "application/json", bytes.NewBufferString(payload))
 		if err != nil {
-			slog.Error("Failed to send webhook", slog.String("webhook_url", webhookURL), slog.Any("error", err))
+			slog.Error("Failed to send webhook", slog.String("scan_id", scanID), slog.String("webhook_url", webhookURL), slog.Any("error", err))
 			return
 		}
 		defer resp.Body.Close()
@@ -74,7 +74,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Info("Started scanning URL", slog.String("scan_id", scanID), slog.String("url", req.URL))
 		start := time.Now()
 		
-		resp, err := http.Get(req.URL)
+		resp, err := SafeHTTPClient().Get(req.URL)
 		if err != nil {
 			slog.Error("Failed to fetch URL", slog.String("scan_id", scanID), slog.String("url", req.URL), slog.Any("error", err))
 			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to fetch URL: %v", err)}, scanID, req.URL)

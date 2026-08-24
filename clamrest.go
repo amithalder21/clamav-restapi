@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,10 +46,28 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := paths[0]
+	requestedPath := paths[0]
+
+	baseDir := opts["SCAN_BASE_DIR"]
+	if baseDir == "" {
+		baseDir = "/tmp" // Secure default
+	}
+
+	cleanBase := filepath.Clean(baseDir)
+	targetPath := filepath.Clean(requestedPath)
+
+	if !filepath.IsAbs(targetPath) {
+		targetPath = filepath.Join(cleanBase, targetPath)
+	}
+
+	if !strings.HasPrefix(targetPath, cleanBase+string(filepath.Separator)) && targetPath != cleanBase {
+		slog.Warn("Path traversal attempt blocked", slog.String("path", requestedPath))
+		writeJSONError(w, "Access denied: path is outside allowed directory", http.StatusForbidden)
+		return
+	}
 
 	c := clamd.NewClamd(opts["CLAMD_PORT"])
-	response, err := c.AllMatchScanFile(path)
+	response, err := c.AllMatchScanFile(targetPath)
 
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusInternalServerError)
@@ -56,7 +75,7 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for responseItem := range response {
-		writeScanResponse(w, responseItem, path)
+		writeScanResponse(w, responseItem, requestedPath)
 		return // Return immediately after the first result to guarantee valid JSON
 	}
 }

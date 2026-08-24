@@ -34,7 +34,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Started downloading and scanning URL", slog.String("url", req.URL))
 	start := time.Now()
 
-	resp, err := http.Get(req.URL)
+	resp, err := SafeHTTPClient().Get(req.URL)
 	if err != nil {
 		slog.Error("Failed to fetch URL", slog.String("url", req.URL), slog.Any("error", err))
 		writeJSONError(w, fmt.Sprintf("Failed to fetch URL: %v", err), http.StatusBadRequest)
