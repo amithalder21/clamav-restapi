@@ -20,6 +20,7 @@ func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
 type ScanResponse struct {
 	Status      string `json:"status"`
 	Description string `json:"description"`
+	ScanID      string `json:"scan_id,omitempty"`
 }
 
 // writeScanResponse writes a standardized JSON response and status code
@@ -47,10 +48,11 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 }
 
 // formatScanResponse returns the JSON string and HTTP status code without writing to a ResponseWriter (useful for webhooks)
-func formatScanResponse(s *clamd.ScanResult) (string, int) {
+func formatScanResponse(s *clamd.ScanResult, scanID string) (string, int) {
 	respBytes, _ := json.Marshal(ScanResponse{
 		Status:      s.Status,
 		Description: s.Description,
+		ScanID:      scanID,
 	})
 	respJson := string(respBytes)
 	statusCode := http.StatusNotImplemented
