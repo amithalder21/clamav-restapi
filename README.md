@@ -164,7 +164,7 @@ Uploads a file directly to the API, blocks until the scan is complete, and retur
 $ curl -i -F "file=@eicar.com.txt" -H "X-API-Key: my-secret-key" http://localhost:9000/scan
 
 HTTP/1.1 406 Not Acceptable
-{ "status": "FOUND", "description": "Eicar-Test-Signature" }
+{ "filename": "eicar.com.txt", "av-status": "INFECTED", "av-signature": "Eicar-Test-Signature", "av-timestamp": "2026/08/25 02:00:11 UTC" }
 ```
 
 ### 2. Synchronous URL Scan
@@ -183,7 +183,7 @@ For large files, you can upload a file (or pass a URL) and immediately receive a
 curl -i -F "file=@eicar.com.txt" -F "webhook_url=https://your-domain.com/callback" http://localhost:9000/scan-async
 
 HTTP/1.1 202 Accepted
-{"scan_id":"uuid-string","message":"Scan started asynchronously"}
+{"scan_id":"uuid-string","message":"Scan started asynchronously","filename":"eicar.com.txt"}
 ```
 
 ### 4. Scan a Local File (Container Disk)
