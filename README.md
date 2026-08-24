@@ -29,19 +29,32 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 
 ## Installation
 
-You can clone the repository and build the Docker image locally.
+You can pull the pre-built, automatically updated Docker image directly from Docker Hub:
 
 ```bash
-git clone https://github.com/amithalder21/clamav-restapi.git
-cd clamav-restapi
-docker build -t clamav-restapi .
+docker pull amithalder/clamav-restapi:latest
 ```
+
+*(Alternatively, to use the Rocky Linux variant, pull `amithalder/clamav-restapi:rocky-latest`)*
 
 ## Quick Start
 
-Run the `clamav-restapi` docker image:
+Run the `clamav-restapi` docker image locally:
 ```bash
-docker run -d -p 9000:9000 -p 9443:9443 --name clamav-restapi clamav-restapi
+docker run -d -p 9000:9000 -p 9443:9443 --name clamav-restapi amithalder/clamav-restapi:latest
+```
+
+If you are deploying this on **AWS ECS Fargate** or want to configure it locally with custom limits and API keys, you can pass environment variables using `-e`:
+
+```bash
+docker run -d \
+  -p 9000:9000 \
+  -e API_KEY="my-secret-key" \
+  -e ADMIN_API_KEY="my-admin-key" \
+  -e MAX_FILE_SIZE="50M" \
+  -e MAX_SCAN_SIZE="150M" \
+  --name clamav-restapi \
+  amithalder/clamav-restapi:latest
 ```
 
 ### Synchronous File Scan
@@ -165,7 +178,7 @@ The API strictly adheres to the following status codes for all scan endpoints an
 By default, the API is completely open. If you wish to secure your endpoints, start the container with the `API_KEY` environment variable.
 
 ```bash
-docker run -d -p 9000:9000 -e API_KEY=your-secret-key --name clamav-restapi clamav-restapi
+docker run -d -p 9000:9000 -e API_KEY=your-secret-key --name clamav-restapi amithalder/clamav-restapi:latest
 ```
 
 Clients must then provide the key via the `X-API-Key` or `Authorization` header:
@@ -229,10 +242,10 @@ go mod tidy
 go build -v .
 ```
 
-To build and test the Docker image:
+To test the locally built Docker image:
 ```bash
-docker build -t clamav-restapi .
-docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi clamav-restapi
+docker build -t amithalder/clamav-restapi:latest .
+docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi amithalder/clamav-restapi:latest
 ```
 
 ## References
