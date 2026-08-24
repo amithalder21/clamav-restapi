@@ -183,7 +183,66 @@ Regardless of which method you use, the scanner will automatically append the fo
 - `av-signature`: `OK` (if clean) or the threat name (e.g. `Eicar-Signature FOUND`)
 - `av-timestamp`: `2026/08/14 06:19:51 UTC`
 
-*Note: The container requires AWS IAM permissions for `s3:GetObject`, `s3:PutObjectTagging`, `sqs:ReceiveMessage`, and `sqs:DeleteMessage`. To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `SQS_WEBHOOK_URL` environment variable.*
+*Note: To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `SQS_WEBHOOK_URL` environment variable.*
+
+#### AWS IAM & Security Setup
+
+To securely connect S3, SQS, and your ClamAV Fargate containers, you must configure the following AWS Permissions:
+
+**1. S3 to SQS (Resource Policy)**
+Attach this Access Policy directly to your SQS Queue to allow S3 to drop events into it:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Service": "s3.amazonaws.com" },
+    "Action": "sqs:SendMessage",
+    "Resource": "arn:aws:sqs:REGION:ACCOUNT_ID:YOUR_QUEUE_NAME",
+    "Condition": {
+      "StringEquals": { "aws:SourceAccount": "YOUR_ACCOUNT_ID" },
+      "ArnLike": { "aws:SourceArn": "arn:aws:s3:::YOUR_BUCKET_NAME" }
+    }
+  }]
+}
+```
+
+**2. Fargate Task Role (IAM Role)**
+Your ClamAV container running in ECS Fargate needs this **IAM Task Role** to read from the queue, stream the file, and tag the result.
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+      "Resource": "arn:aws:sqs:REGION:ACCOUNT_ID:YOUR_QUEUE_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObjectTagging"],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+    }
+  ]
+}
+```
+
+**3. Restricting Infected File Downloads (S3 Bucket Policy)**
+To completely prevent internal users or APIs from downloading infected files, attach this Bucket Policy to your S3 bucket. It tells AWS to block downloads if the scanner tagged the file as infected:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*",
+    "Condition": {
+      "StringEquals": { "s3:ExistingObjectTag/av-status": "INFECTED" }
+    }
+  }]
+}
+```
 
 ### Scan a Local File (Container Disk)
 
