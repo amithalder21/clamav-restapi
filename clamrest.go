@@ -28,25 +28,16 @@ func home(w http.ResponseWriter, r *http.Request) {
 
 	c := clamd.NewClamd(opts["CLAMD_PORT"])
 
-	response, err := c.Stats()
-
+	// Ping clamd to ensure it is responsive
+	err := c.Ping()
 	if err != nil {
-		errJson, eErr := json.Marshal(err)
-		if eErr != nil {
-			fmt.Println(eErr)
-			return
-		}
-		fmt.Fprint(w, string(errJson))
+		writeJSONError(w, "ClamAV daemon is unreachable", http.StatusServiceUnavailable)
 		return
 	}
 
-	resJson, eRes := json.Marshal(response)
-	if eRes != nil {
-		fmt.Println(eRes)
-		return
-	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	fmt.Fprint(w, string(resJson))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK", "message": "ClamAV REST API is ready and ClamAV daemon is responsive"}`))
 }
 
 func scanPathHandler(w http.ResponseWriter, r *http.Request) {
