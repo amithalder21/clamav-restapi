@@ -21,8 +21,8 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 
 ## Features
 
-- **Multi-Stage Docker Builds**: Available in Alpine and Rocky Linux bases, optimized for minimal image sizes.
-- **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks (ideal for AWS ECS Fargate).
+- **Event-Driven AWS Architecture**: Natively integrates with AWS S3, SQS, and EventBridge to perform Zero-HTTP polling, native S3 streaming, and S3 Object Auto-Tagging (`av-status`, `av-signature`).
+- **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks.
 - **Cloud URL Scanning**: Stream files directly from remote URLs to ClamAV without buffering in memory.
 - **API Key Authentication**: Optional security layer to restrict access.
 - **Prometheus Metrics**: Built-in `/metrics` endpoint.
@@ -163,6 +163,28 @@ curl -i -X POST -H "Content-Type: application/json" \
   http://localhost:9000/scan-url-async
 ```
 
+### Event-Driven AWS Integrations (S3 / SQS / EventBridge)
+
+This project natively integrates with AWS to provide seamless event-driven file scanning, which removes the need to stream bytes through your backend API. There are two ways to use this feature:
+
+**1. Autonomous SQS Background Poller (Recommended)**
+If you pass the `SQS_QUEUE_URL` environment variable to the container, it launches a background goroutine that constantly long-polls the SQS queue for S3 `ObjectCreated` events. 
+When a file is uploaded to your bucket, S3 sends an event to SQS. The container intercepts it, streams the file directly from S3 to the ClamAV daemon (bypassing disk and memory storage), and applies an S3 Object Tag with the result.
+
+**2. HTTP API Push (EventBridge / API Gateway)**
+If you prefer to have EventBridge or another service explicitly "push" the S3 Event JSON payload to the scanner, you can `POST` the standard AWS S3 Event Notification JSON directly to the `/scan-s3-event` endpoint:
+```bash
+curl -i -X POST -H "Content-Type: application/json" -d @s3-event.json http://localhost:9000/scan-s3-event
+```
+
+**S3 Auto-Tagging & Webhook Routing**
+Regardless of which method you use, the scanner will automatically append the following Object Tags to your S3 File once the scan finishes:
+- `av-status`: `CLEAN` or `INFECTED`
+- `av-signature`: `OK` (if clean) or the threat name (e.g. `Eicar-Signature FOUND`)
+- `av-timestamp`: `2026/08/14 06:19:51 UTC`
+
+*Note: The container requires AWS IAM permissions for `s3:GetObject`, `s3:PutObjectTagging`, `sqs:ReceiveMessage`, and `sqs:DeleteMessage`. To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `SQS_WEBHOOK_URL` environment variable.*
+
 ### Scan a Local File (Container Disk)
 
 If you have mounted a volume into the container, you can instruct ClamAV to scan a file already residing locally on the container's disk.
@@ -178,9 +200,29 @@ To allow cluster administrators to manage the running ClamAV daemon, we provide 
 > **Important Security Note:** The Admin API is **disabled by default**. To enable it, you must start the container with the `ADMIN_API_KEY` environment variable. This key must then be provided via the `X-API-Key` or `Authorization` header for all `/admin/*` endpoints.
 
 ### 1. Get Daemon Status
-Returns the current ClamAV engine version and internal memory statistics.
+Returns comprehensive health data including the ClamAV engine version, signature database info, Go runtime metrics, and the active configuration limits.
 ```bash
-curl -H "X-API-Key: your-admin-key" http://localhost:9000/admin/status
+$ curl -H "X-API-Key: your-admin-key" http://localhost:9000/admin/status
+
+{
+  "clamav": {
+    "engine_version": "ClamAV 1.4.6",
+    "signature_version": "28102",
+    "signature_date": "Mon Aug 24 08:23:58 2026",
+    "threads_live": "1",
+    "pools_used": "967.598M"
+  },
+  "go_metrics": {
+    "uptime_seconds": 1284,
+    "uptime_human": "21m24s",
+    "goroutines": 14,
+    "memory_alloc_bytes": 4829104
+  },
+  "config": {
+    "MAX_FILE_SIZE": "25M",
+    "MAX_SCAN_SIZE": "100M"
+  }
+}
 ```
 
 ### 2. Reload Virus Database
@@ -206,6 +248,7 @@ Below is a complete reference of all available HTTP endpoints exposed by the ser
 | `POST` | `/scan-url` | Scans a file by streaming it from a remote URL. Payload: `{"url":"..."}`. | `API_KEY` (if set) |
 | `POST` | `/scan-async` | Asynchronously scans an uploaded file. Requires `file` and `webhook_url` form fields. | `API_KEY` (if set) |
 | `POST` | `/scan-url-async` | Asynchronously scans a URL. Payload: `{"url":"...", "webhook_url":"..."}`. | `API_KEY` (if set) |
+| `POST` | `/scan-s3-event` | Takes an AWS S3 `ObjectCreated` JSON payload, streams file from S3, and tags it. | `API_KEY` (if set) |
 | `GET`  | `/admin/status` | Returns ClamAV engine version and internal memory stats. | `ADMIN_API_KEY` |
 | `POST` | `/admin/reload` | Forces ClamAV to hot-reload virus databases from disk to memory. | `ADMIN_API_KEY` |
 | `POST` | `/admin/update-signatures` | Forces `freshclam` to update virus signatures immediately in the background. | `ADMIN_API_KEY` |
@@ -242,6 +285,8 @@ Below is the complete list of available options that can be used to customize yo
 |-----------|-------------|
 | `API_KEY` | Secures the REST API with a required API key. |
 | `ADMIN_API_KEY` | Enables and secures the `/admin/*` REST endpoints. |
+| `SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
+| `SQS_WEBHOOK_URL` | Fallback webhook URL to hit after an S3 object is scanned and tagged. |
 | `CLAMD_PORT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |
