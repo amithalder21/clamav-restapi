@@ -9,7 +9,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o clamav-rest .
 
 # Runtime stage
-FROM alpine:3.20
+FROM alpine:edge
 
 # Set timezone
 RUN apk add --no-cache tzdata \
