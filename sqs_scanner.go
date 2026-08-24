@@ -161,9 +161,15 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			continue
 		}
 
+		maxFileSizeBytes := parseSize(opts["MAX_FILE_SIZE"])
+		if maxFileSizeBytes == 0 {
+			maxFileSizeBytes = 100 * 1024 * 1024 // default 100M
+		}
+		limitedBody := http.MaxBytesReader(nil, objResp.Body, maxFileSizeBytes+1024*1024)
+
 		c := clamd.NewClamd(opts["CLAMD_PORT"])
 		var abort chan bool
-		clamdResponse, err := c.ScanStream(objResp.Body, abort)
+		clamdResponse, err := c.ScanStream(limitedBody, abort)
 		if err != nil {
 			slog.Error("ScanStream error for S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 			objResp.Body.Close()

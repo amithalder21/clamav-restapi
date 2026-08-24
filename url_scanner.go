@@ -52,9 +52,15 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	maxFileSizeBytes := parseSize(opts["MAX_FILE_SIZE"])
+	if maxFileSizeBytes == 0 {
+		maxFileSizeBytes = 100 * 1024 * 1024 // default 100M
+	}
+	limitedBody := http.MaxBytesReader(nil, resp.Body, maxFileSizeBytes+1024*1024)
+
 	c := clamd.NewClamd(opts["CLAMD_PORT"])
 	var abort chan bool
-	clamdResponse, err := c.ScanStream(resp.Body, abort)
+	clamdResponse, err := c.ScanStream(limitedBody, abort)
 	
 	if err != nil {
 		slog.Error("ScanStream error", slog.String("url", req.URL), slog.Any("error", err))

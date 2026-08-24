@@ -177,13 +177,16 @@ func parseSize(sizeStr string) int64 {
 	multiplier := int64(1)
 	if strings.HasSuffix(sizeStr, "G") || strings.HasSuffix(sizeStr, "GB") {
 		multiplier = 1024 * 1024 * 1024
-		sizeStr = strings.TrimRight(sizeStr, "GB")
+		sizeStr = strings.TrimSuffix(sizeStr, "GB")
+		sizeStr = strings.TrimSuffix(sizeStr, "G")
 	} else if strings.HasSuffix(sizeStr, "M") || strings.HasSuffix(sizeStr, "MB") {
 		multiplier = 1024 * 1024
-		sizeStr = strings.TrimRight(sizeStr, "MB")
+		sizeStr = strings.TrimSuffix(sizeStr, "MB")
+		sizeStr = strings.TrimSuffix(sizeStr, "M")
 	} else if strings.HasSuffix(sizeStr, "K") || strings.HasSuffix(sizeStr, "KB") {
 		multiplier = 1024
-		sizeStr = strings.TrimRight(sizeStr, "KB")
+		sizeStr = strings.TrimSuffix(sizeStr, "KB")
+		sizeStr = strings.TrimSuffix(sizeStr, "K")
 	}
 	
 	var val int64
