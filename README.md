@@ -184,6 +184,17 @@ curl -i -F "file=@eicar.com.txt" -F "webhook_url=https://your-domain.com/callbac
 
 HTTP/1.1 202 Accepted
 {"scan_id":"uuid-string","message":"Scan started asynchronously","filename":"eicar.com.txt"}
+
+**Webhook Callback Payload (Sent later):**
+```json
+{
+  "filename": "eicar.com.txt",
+  "scan_id": "uuid-string",
+  "av-status": "INFECTED",
+  "av-signature": "Eicar-Test-Signature",
+  "av-timestamp": "2026/08/25 02:00:11 UTC"
+}
+```
 ```
 
 ### 4. Scan a Local File (Container Disk)
@@ -191,6 +202,9 @@ If you have mounted a volume into the container, you can instruct ClamAV to scan
 
 ```bash
 curl -i "http://localhost:9000/scanPath?path=/tmp/suspicious_file.txt"
+
+HTTP/1.1 200 OK
+{ "filename": "/tmp/suspicious_file.txt", "av-status": "CLEAN", "av-signature": "CLEAN", "av-timestamp": "2026/08/25 02:00:11 UTC" }
 ```
 
 ---
@@ -207,6 +221,9 @@ When a file is uploaded to your bucket, S3 sends an event to SQS. The container 
 If you prefer to have EventBridge or another service explicitly "push" the S3 Event JSON payload to the scanner, you can `POST` the standard AWS S3 Event Notification JSON directly to the `/scan-s3-event` endpoint:
 ```bash
 curl -i -X POST -H "Content-Type: application/json" -d @s3-event.json http://localhost:9000/scan-s3-event
+
+HTTP/1.1 202 Accepted
+{"scan_id":"uuid-string","message":"S3 Event processing started asynchronously"}
 ```
 
 ### Advanced S3 Features
@@ -303,18 +320,33 @@ To allow cluster administrators to manage the running ClamAV daemon, we provide 
 Returns comprehensive health data including the ClamAV engine version, signature database info, Go runtime metrics, and the active configuration limits.
 ```bash
 $ curl -H "X-API-Key: your-admin-key" http://localhost:9000/admin/status
+
+HTTP/1.1 200 OK
+{
+  "raw_version": "ClamAV 1.4.6/28102/Mon Aug 24 08:23:58 2026",
+  "clamav": { "engine_version": "1.4.6", "signature_version": "28102", "signature_date": "Mon Aug 24 08:23:58 2026" },
+  "stats": { "Pools": "1", "State": "VALID PRIMARY", "Threads": "live 1  idle 0 max 10 idle-timeout 30", "Queue": "0 items" },
+  "config": { "CLAMD_PORT": "tcp://localhost:3310", "MAX_FILE_SIZE": "25M" },
+  "go_metrics": { "uptime_seconds": 120, "uptime_human": "2m0s", "goroutines": 4, "memory_allocated_mb": 1.5 }
+}
 ```
 
 ### 2. Reload Virus Database
 Forces the ClamAV daemon to reload its virus database from disk into memory without restarting the container.
 ```bash
-curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/admin/reload
+$ curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/admin/reload
+
+HTTP/1.1 200 OK
+{"message": "Reload command sent to ClamAV successfully."}
 ```
 
 ### 3. Update Signatures
 Forces `freshclam` to execute immediately in the background, downloading the absolute latest virus definitions from the internet.
 ```bash
-curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/admin/update-signatures
+$ curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/admin/update-signatures
+
+HTTP/1.1 202 Accepted
+{"message": "Signature update (freshclam) started in the background."}
 ```
 
 ---
