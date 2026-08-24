@@ -111,22 +111,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			var abort chan bool
 			response, err := c.ScanStream(part, abort)
 			for s := range response {
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				respJson := fmt.Sprintf("{ Status: \"%s\", Description: \"%s\" }", s.Status, s.Description)
-				switch s.Status {
-				case clamd.RES_OK:
-					w.WriteHeader(http.StatusOK)
-				case clamd.RES_FOUND:
-					w.WriteHeader(http.StatusNotAcceptable)
-				case clamd.RES_ERROR:
-					w.WriteHeader(http.StatusBadRequest)
-				case clamd.RES_PARSE_ERROR:
-					w.WriteHeader(http.StatusPreconditionFailed)
-				default:
-					w.WriteHeader(http.StatusNotImplemented)
-				}
-				fmt.Fprint(w, respJson)
-				fmt.Printf(time.Now().Format(time.RFC3339)+" Scan result for: %v, %v\n", part.FileName(), s)
+				writeScanResponse(w, s, part.FileName())
 			}
 			fmt.Printf(time.Now().Format(time.RFC3339) + " Finished scanning: " + part.FileName() + "\n")
 		}
@@ -180,8 +165,11 @@ func main() {
 
 	fmt.Printf("Connected to clamd on %v\n", opts["CLAMD_PORT"])
 
-	http.HandleFunc("/scan", scanHandler)
-	http.HandleFunc("/scanPath", scanPathHandler)
+	http.HandleFunc("/scan", AuthMiddleware(scanHandler))
+	http.HandleFunc("/scanPath", AuthMiddleware(scanPathHandler))
+	http.HandleFunc("/scan-url", AuthMiddleware(scanURLHandler))
+	http.HandleFunc("/scan-async", AuthMiddleware(scanAsyncHandler))
+	http.HandleFunc("/scan-url-async", AuthMiddleware(scanURLAsyncHandler))
 	http.HandleFunc("/", home)
 
 	// Prometheus metrics
