@@ -124,6 +124,14 @@ curl -i -X POST -H "Content-Type: application/json" \
   http://localhost:9000/scan-url-async
 ```
 
+### Scan a Local File (Container Disk)
+
+If you have mounted a volume into the container, you can instruct ClamAV to scan a file already residing locally on the container's disk.
+
+```bash
+curl -i "http://localhost:9000/scanPath?path=/tmp/suspicious_file.txt"
+```
+
 ## Admin API
 
 To allow cluster administrators to manage the running ClamAV daemon, we provide a set of administrative endpoints. 
@@ -196,6 +204,7 @@ Below is the complete list of available options that can be used to customize yo
 |-----------|-------------|
 | `API_KEY` | Secures the REST API with a required API key. |
 | `ADMIN_API_KEY` | Enables and secures the `/admin/*` REST endpoints. |
+| `CLAMD_PORT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |
 | `MAX_RECURSION` | How many nested archives to scan - Default `16` |
@@ -226,6 +235,18 @@ Below is the complete list of available options that can be used to customize yo
 For debugging and maintenance purposes, you may access the container shell:
 ```bash
 docker exec -it clamav-restapi /bin/sh
+```
+
+### Enabling HTTPS (TLS)
+
+The REST API natively listens for HTTPS traffic on port `9443`. To enable this securely, you must mount your SSL certificate and key directly into the container at runtime:
+
+```bash
+docker run -d \
+  -p 9443:9443 \
+  -v /path/to/your/cert.crt:/etc/ssl/clamav-rest/server.crt \
+  -v /path/to/your/cert.key:/etc/ssl/clamav-rest/server.key \
+  amithalder/clamav-restapi:latest
 ```
 
 ### Prometheus
