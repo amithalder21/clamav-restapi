@@ -44,7 +44,7 @@ func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string, filename
 
 func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -112,7 +112,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 
 func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
