@@ -220,8 +220,13 @@ Your ClamAV container running in ECS Fargate needs this **IAM Task Role** to rea
     },
     {
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObjectTagging"],
+      "Action": ["s3:GetObject", "s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObject"],
       "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["sns:Publish"],
+      "Resource": "arn:aws:sns:REGION:ACCOUNT_ID:YOUR_TOPIC_NAME"
     }
   ]
 }
@@ -346,6 +351,9 @@ Below is the complete list of available options that can be used to customize yo
 | `ADMIN_API_KEY` | Enables and secures the `/admin/*` REST endpoints. |
 | `SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
 | `SQS_WEBHOOK_URL` | Fallback webhook URL to hit after an S3 object is scanned and tagged. |
+| `DELETE_INFECTED_FILES` | If `true`, the scanner will actively delete infected files from S3 rather than just tagging them. |
+| `SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
+| `SNS_PUBLISH_INFECTED_ONLY` | If `true`, the scanner will only publish to SNS if a file is infected. |
 | `CLAMD_PORT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/dutchcoders/go-clamd"
 	"github.com/google/uuid"
@@ -63,7 +64,8 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s3Client := s3.NewFromConfig(cfg)
-		processS3Event(s3Client, string(bodyBytes), scanID)
+		snsClient := sns.NewFromConfig(cfg)
+		processS3Event(s3Client, snsClient, string(bodyBytes), scanID)
 	}()
 }
 
@@ -78,6 +80,7 @@ func startSQSConsumer(queueURL string) {
 
 	sqsClient := sqs.NewFromConfig(cfg)
 	s3Client := s3.NewFromConfig(cfg)
+	snsClient := sns.NewFromConfig(cfg)
 
 	for {
 		msgResult, err := sqsClient.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
@@ -97,20 +100,20 @@ func startSQSConsumer(queueURL string) {
 		}
 
 		for _, msg := range msgResult.Messages {
-			go processSQSMessage(sqsClient, s3Client, queueURL, *msg.Body, *msg.ReceiptHandle)
+			go processSQSMessage(sqsClient, s3Client, snsClient, queueURL, *msg.Body, *msg.ReceiptHandle)
 		}
 	}
 }
 
-func processSQSMessage(sqsClient *sqs.Client, s3Client *s3.Client, queueURL string, body string, receiptHandle string) {
+func processSQSMessage(sqsClient *sqs.Client, s3Client *s3.Client, snsClient *sns.Client, queueURL string, body string, receiptHandle string) {
 	scanID := uuid.New().String()
-	processed := processS3Event(s3Client, body, scanID)
+	processed := processS3Event(s3Client, snsClient, body, scanID)
 	if processed {
 		deleteMessage(sqsClient, queueURL, receiptHandle)
 	}
 }
 
-func processS3Event(s3Client *s3.Client, body string, scanID string) bool {
+func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, scanID string) bool {
 	var s3Event S3Event
 	if err := json.Unmarshal([]byte(body), &s3Event); err != nil {
 		fmt.Printf("[%s] Failed to parse message body: %v\n", scanID, err)
@@ -171,26 +174,31 @@ func processS3Event(s3Client *s3.Client, body string, scanID string) bool {
 		objResp.Body.Close()
 		fmt.Printf(time.Now().Format(time.RFC3339)+" [%s] Finished scanning s3://%s/%s. Result: %s\n", scanID, bucket, key, scanStatus)
 
-		timestamp := time.Now().UTC().Format("2006/01/02 15:04:05 UTC")
-		tagReq := &s3.PutObjectTaggingInput{
+		// 3a. Retrieve existing tags to prevent overwriting user tags
+		var finalTags []s3types.Tag
+		existingTagsResp, err := s3Client.GetObjectTagging(context.TODO(), &s3.GetObjectTaggingInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
-			Tagging: &s3types.Tagging{
-				TagSet: []s3types.Tag{
-					{
-						Key:   aws.String("av-status"),
-						Value: aws.String(scanStatus),
-					},
-					{
-						Key:   aws.String("av-signature"),
-						Value: aws.String(scanSignature),
-					},
-					{
-						Key:   aws.String("av-timestamp"),
-						Value: aws.String(timestamp),
-					},
-				},
-			},
+		})
+		if err == nil && existingTagsResp.TagSet != nil {
+			for _, t := range existingTagsResp.TagSet {
+				if *t.Key != "av-status" && *t.Key != "av-signature" && *t.Key != "av-timestamp" {
+					finalTags = append(finalTags, t)
+				}
+			}
+		}
+
+		// Append new tags
+		timestamp := time.Now().UTC().Format("2006/01/02 15:04:05 UTC")
+		finalTags = append(finalTags, s3types.Tag{Key: aws.String("av-status"), Value: aws.String(scanStatus)})
+		finalTags = append(finalTags, s3types.Tag{Key: aws.String("av-signature"), Value: aws.String(scanSignature)})
+		finalTags = append(finalTags, s3types.Tag{Key: aws.String("av-timestamp"), Value: aws.String(timestamp)})
+
+		// 3b. Update tags
+		tagReq := &s3.PutObjectTaggingInput{
+			Bucket:  aws.String(bucket),
+			Key:     aws.String(key),
+			Tagging: &s3types.Tagging{TagSet: finalTags},
 		}
 		
 		if _, err := s3Client.PutObjectTagging(context.TODO(), tagReq); err != nil {
@@ -199,6 +207,40 @@ func processS3Event(s3Client *s3.Client, body string, scanID string) bool {
 			fmt.Printf("[%s] Successfully tagged s3://%s/%s as %s\n", scanID, bucket, key, scanStatus)
 		}
 
+		// 4. Optionally delete if infected
+		if scanStatus == "INFECTED" && opts["DELETE_INFECTED_FILES"] == "true" {
+			_, err := s3Client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				fmt.Printf("[%s] Failed to delete infected file s3://%s/%s: %v\n", scanID, bucket, key, err)
+			} else {
+				fmt.Printf("[%s] Deleted infected file s3://%s/%s\n", scanID, bucket, key)
+			}
+		}
+
+		// 5. Optionally publish to SNS
+		if snsTopicARN, ok := opts["SNS_TOPIC_ARN"]; ok && snsTopicARN != "" {
+			publish := true
+			if opts["SNS_PUBLISH_INFECTED_ONLY"] == "true" && scanStatus != "INFECTED" {
+				publish = false
+			}
+			if publish {
+				msgBody := fmt.Sprintf(`{"bucket":"%s","key":"%s","av-status":"%s","av-signature":"%s","av-timestamp":"%s"}`, bucket, key, scanStatus, scanSignature, timestamp)
+				_, err := snsClient.Publish(context.TODO(), &sns.PublishInput{
+					TopicArn: aws.String(snsTopicARN),
+					Message:  aws.String(msgBody),
+				})
+				if err != nil {
+					fmt.Printf("[%s] Failed to publish to SNS: %v\n", scanID, err)
+				} else {
+					fmt.Printf("[%s] Published result to SNS topic %s\n", scanID, snsTopicARN)
+				}
+			}
+		}
+
+		// 6. Send Webhook
 		webhookURL := getWebhookURL(objResp, opts["SQS_WEBHOOK_URL"])
 		if webhookURL != "" && clamdResult != nil {
 			sendWebhook(webhookURL, clamdResult, scanID, fmt.Sprintf("s3://%s/%s", bucket, key))
