@@ -28,22 +28,19 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 
 ## Installation
 
-Automated builds of the image are available on Docker Hub and can be built locally.
+You can clone the repository and build the Docker image locally.
 
 ```bash
-docker pull ajilaag/clamav-rest:latest
-```
-
-Or build it from source:
-```bash
-docker build -t clamav-rest .
+git clone https://github.com/amithalder21/clamav-restapi.git
+cd clamav-restapi
+docker build -t clamav-restapi .
 ```
 
 ## Quick Start
 
-Run the clamav-rest docker image:
+Run the `clamav-restapi` docker image:
 ```bash
-docker run -d -p 9000:9000 -p 9443:9443 --name clamav-rest clamav-rest
+docker run -d -p 9000:9000 -p 9443:9443 --name clamav-restapi clamav-restapi
 ```
 
 ### Synchronous File Scan
@@ -115,7 +112,7 @@ curl -i -X POST -H "Content-Type: application/json" \
 
 ## Status Codes
 
-The API strict adheres to the following status codes for all scan endpoints and webhook payloads:
+The API strictly adheres to the following status codes for all scan endpoints and webhook payloads:
 - `200` - Clean file (no known infections)
 - `400` - ClamAV returned a general error for the file
 - `406` - INFECTED
@@ -127,7 +124,7 @@ The API strict adheres to the following status codes for all scan endpoints and 
 By default, the API is completely open. If you wish to secure your endpoints, start the container with the `API_KEY` environment variable.
 
 ```bash
-docker run -d -p 9000:9000 -e API_KEY=your-secret-key --name clamav-rest clamav-rest
+docker run -d -p 9000:9000 -e API_KEY=your-secret-key --name clamav-restapi clamav-restapi
 ```
 
 Clients must then provide the key via the `X-API-Key` or `Authorization` header:
@@ -173,7 +170,7 @@ Below is the complete list of available options that can be used to customize yo
 
 For debugging and maintenance purposes, you may access the container shell:
 ```bash
-docker exec -it clamav-rest /bin/sh
+docker exec -it clamav-restapi /bin/sh
 ```
 
 ### Prometheus
@@ -192,8 +189,8 @@ go build -v .
 
 To build and test the Docker image:
 ```bash
-docker build -t clamav-rest .
-docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-rest clamav-rest
+docker build -t clamav-restapi .
+docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi clamav-restapi
 ```
 
 ## References
