@@ -90,6 +90,11 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf(time.Now().Format(time.RFC3339) + " Started scanning: " + part.FileName() + "\n")
 			var abort chan bool
 			response, err := c.ScanStream(part, abort)
+			if err != nil {
+				writeJSONError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			
 			for s := range response {
 				writeScanResponse(w, s, part.FileName())
 				break
