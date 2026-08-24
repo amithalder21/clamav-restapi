@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"runtime"
@@ -118,6 +119,7 @@ func adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 	
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err != nil {
+		slog.Error("Failed to reload daemon", slog.Any("error", err))
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(AdminGenericResponse{
 			Error: fmt.Sprintf("Failed to reload daemon: %v", err),
@@ -125,6 +127,7 @@ func adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("Reload command sent to ClamAV successfully")
 	json.NewEncoder(w).Encode(AdminGenericResponse{
 		Message: "Reload command sent to ClamAV successfully.",
 	})
@@ -143,14 +146,14 @@ func adminUpdateSignaturesHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go func() {
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [Admin] Triggering freshclam update...\n")
+		slog.Info("Triggering freshclam update")
 		cmd := exec.Command("freshclam")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			fmt.Printf(time.Now().Format(time.RFC3339)+" [Admin] freshclam failed: %v\nOutput: %s\n", err, string(out))
+			slog.Error("freshclam failed", slog.Any("error", err), slog.String("output", string(out)))
 			return
 		}
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [Admin] freshclam succeeded:\n%s\n", string(out))
+		slog.Info("freshclam succeeded", slog.String("output", string(out)))
 		
 		// Optionally reload clamd after update
 		c := clamd.NewClamd(opts["CLAMD_PORT"])

@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -61,7 +61,7 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		cfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
-			fmt.Printf("[API S3-Event] Failed to load AWS config: %v\n", err)
+			slog.Error("Failed to load AWS config for S3-Event", slog.Any("error", err))
 			return
 		}
 		s3Client := s3.NewFromConfig(cfg)
@@ -71,11 +71,11 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func startSQSConsumer(queueURL string) {
-	fmt.Printf(time.Now().Format(time.RFC3339)+" [SQS] Starting consumer on queue %s\n", queueURL)
+	slog.Info("Starting SQS consumer", slog.String("queue", queueURL))
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		fmt.Printf("[SQS] Failed to load AWS config: %v\n", err)
+		slog.Error("Failed to load AWS config for SQS", slog.Any("error", err))
 		return
 	}
 
@@ -91,7 +91,7 @@ func startSQSConsumer(queueURL string) {
 		})
 
 		if err != nil {
-			fmt.Printf("[SQS] Error receiving messages: %v\n", err)
+			slog.Error("Error receiving messages from SQS", slog.Any("error", err))
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -117,7 +117,7 @@ func processSQSMessage(sqsClient *sqs.Client, s3Client *s3.Client, snsClient *sn
 func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, scanID string) bool {
 	var s3Event S3Event
 	if err := json.Unmarshal([]byte(body), &s3Event); err != nil {
-		fmt.Printf("[%s] Failed to parse message body: %v\n", scanID, err)
+		slog.Error("Failed to parse SQS message body", slog.String("scan_id", scanID), slog.Any("error", err))
 		return true // Invalid JSON, delete message
 	}
 
@@ -134,11 +134,14 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		key, _ := url.QueryUnescape(record.S3.Object.Key)
 		versionId := record.S3.Object.VersionId
 
-		var versionMsg string
-		if versionId != "" {
-			versionMsg = fmt.Sprintf(" (Version: %s)", versionId)
-		}
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [%s] Started scanning S3 Object: s3://%s/%s%s\n", scanID, bucket, key, versionMsg)
+		slog.Info("Started scanning S3 Object", 
+			slog.String("scan_id", scanID), 
+			slog.String("bucket", bucket), 
+			slog.String("key", key),
+			slog.String("version_id", versionId),
+		)
+
+		start := time.Now()
 
 		objReq := &s3.GetObjectInput{
 			Bucket: aws.String(bucket),
@@ -150,7 +153,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		
 		objResp, err := s3Client.GetObject(context.TODO(), objReq)
 		if err != nil {
-			fmt.Printf("[%s] Failed to fetch object s3://%s/%s: %v\n", scanID, bucket, key, err)
+			slog.Error("Failed to fetch S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 			continue
 		}
 
@@ -158,7 +161,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(objResp.Body, abort)
 		if err != nil {
-			fmt.Printf("[%s] ScanStream error for s3://%s/%s: %v\n", scanID, bucket, key, err)
+			slog.Error("ScanStream error for S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 			objResp.Body.Close()
 			continue
 		}
@@ -182,7 +185,16 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			break
 		}
 		objResp.Body.Close()
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [%s] Finished scanning s3://%s/%s. Result: %s\n", scanID, bucket, key, scanStatus)
+
+		slog.Info("Finished scanning S3 Object", 
+			slog.String("scan_id", scanID),
+			slog.String("bucket", bucket),
+			slog.String("key", key),
+			slog.String("version_id", versionId),
+			slog.String("result", scanStatus),
+			slog.String("signature", scanSignature),
+			slog.Duration("duration_ms", time.Since(start)),
+		)
 
 		// 3a. Retrieve existing tags to prevent overwriting user tags
 		var finalTags []s3types.Tag
@@ -220,9 +232,9 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		}
 		
 		if _, err := s3Client.PutObjectTagging(context.TODO(), tagReq); err != nil {
-			fmt.Printf("[%s] Failed to tag object s3://%s/%s: %v\n", scanID, bucket, key, err)
+			slog.Error("Failed to tag S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 		} else {
-			fmt.Printf("[%s] Successfully tagged s3://%s/%s as %s\n", scanID, bucket, key, scanStatus)
+			slog.Info("Successfully tagged S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.String("result", scanStatus))
 		}
 
 		// 4. Optionally delete if infected
@@ -236,9 +248,9 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			}
 			_, err := s3Client.DeleteObject(context.TODO(), delReq)
 			if err != nil {
-				fmt.Printf("[%s] Failed to delete infected file s3://%s/%s: %v\n", scanID, bucket, key, err)
+				slog.Error("Failed to delete infected S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 			} else {
-				fmt.Printf("[%s] Deleted infected file s3://%s/%s\n", scanID, bucket, key)
+				slog.Info("Deleted infected S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key))
 			}
 		}
 
@@ -249,15 +261,15 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 				publish = false
 			}
 			if publish {
-				msgBody := fmt.Sprintf(`{"bucket":"%s","key":"%s","av-status":"%s","av-signature":"%s","av-timestamp":"%s"}`, bucket, key, scanStatus, scanSignature, timestamp)
+				msgBody := "{\"bucket\":\"" + bucket + "\",\"key\":\"" + key + "\",\"av-status\":\"" + scanStatus + "\",\"av-signature\":\"" + scanSignature + "\",\"av-timestamp\":\"" + timestamp + "\"}"
 				_, err := snsClient.Publish(context.TODO(), &sns.PublishInput{
 					TopicArn: aws.String(snsTopicARN),
 					Message:  aws.String(msgBody),
 				})
 				if err != nil {
-					fmt.Printf("[%s] Failed to publish to SNS: %v\n", scanID, err)
+					slog.Error("Failed to publish to SNS", slog.String("scan_id", scanID), slog.Any("error", err))
 				} else {
-					fmt.Printf("[%s] Published result to SNS topic %s\n", scanID, snsTopicARN)
+					slog.Info("Published result to SNS", slog.String("scan_id", scanID), slog.String("topic", snsTopicARN))
 				}
 			}
 		}
@@ -265,7 +277,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		// 6. Send Webhook
 		webhookURL := getWebhookURL(objResp, opts["SQS_WEBHOOK_URL"])
 		if webhookURL != "" && clamdResult != nil {
-			sendWebhook(webhookURL, clamdResult, scanID, fmt.Sprintf("s3://%s/%s", bucket, key))
+			sendWebhook(webhookURL, clamdResult, scanID, "s3://"+bucket+"/"+key)
 		}
 	}
 	
@@ -290,6 +302,6 @@ func deleteMessage(sqsClient *sqs.Client, queueURL string, receiptHandle string)
 		ReceiptHandle: aws.String(receiptHandle),
 	})
 	if err != nil {
-		fmt.Printf("[SQS] Failed to delete message: %v\n", err)
+		slog.Error("Failed to delete SQS message", slog.Any("error", err))
 	}
 }

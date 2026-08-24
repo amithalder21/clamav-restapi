@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -87,19 +87,26 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			fmt.Printf(time.Now().Format(time.RFC3339) + " Started scanning: " + part.FileName() + "\n")
+			start := time.Now()
+			slog.Info("Started scanning file", slog.String("filename", part.FileName()))
 			var abort chan bool
 			response, err := c.ScanStream(part, abort)
 			if err != nil {
+				slog.Error("ScanStream error", slog.String("filename", part.FileName()), slog.Any("error", err))
 				writeJSONError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			
 			for s := range response {
+				slog.Info("Finished scanning file", 
+					slog.String("filename", part.FileName()),
+					slog.String("result", s.Status),
+					slog.String("description", s.Description),
+					slog.Duration("duration_ms", time.Since(start)),
+				)
 				writeScanResponse(w, s, part.FileName())
 				break
 			}
-			fmt.Printf(time.Now().Format(time.RFC3339) + " Finished scanning: " + part.FileName() + "\n")
 			return // Process only the first uploaded file to prevent invalid JSON streaming
 		}
 	default:
@@ -114,21 +121,24 @@ func waitForClamD(port string, times int) {
 
 	if err != nil {
 		if times < 30 {
-			fmt.Printf("clamD not running, waiting times [%v]\n", times)
+			slog.Info("clamD not running, waiting", slog.Int("attempt", times))
 			time.Sleep(time.Second * 4)
 			waitForClamD(port, times+1)
 		} else {
-			fmt.Printf("Error getting clamd version: %v\n", err)
+			slog.Error("Error getting clamd version", slog.Any("error", err))
 			os.Exit(1)
 		}
 	} else {
 		for version_string := range version {
-			fmt.Printf("Clamd version: %#v\n", version_string.Raw)
+			slog.Info("Clamd version", slog.String("version", version_string.Raw))
 		}
 	}
 }
 
 func main() {
+	// Configure slog for JSON output to os.Stdout
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 
 	const (
 		PORT     = ":9000"
@@ -146,8 +156,8 @@ func main() {
 		opts["CLAMD_PORT"] = "tcp://localhost:3310"
 	}
 
-	fmt.Printf("Starting clamav rest bridge\n")
-	fmt.Printf("Connecting to clamd on %v\n", opts["CLAMD_PORT"])
+	slog.Info("Starting clamav rest bridge")
+	slog.Info("Connecting to clamd", slog.String("port", opts["CLAMD_PORT"]))
 	
 	if sqsQueueURL, ok := opts["SQS_QUEUE_URL"]; ok && sqsQueueURL != "" {
 		go startSQSConsumer(sqsQueueURL)
@@ -155,7 +165,7 @@ func main() {
 	
 	waitForClamD(opts["CLAMD_PORT"], 1)
 
-	fmt.Printf("Connected to clamd on %v\n", opts["CLAMD_PORT"])
+	slog.Info("Connected to clamd", slog.String("port", opts["CLAMD_PORT"]))
 
 	http.HandleFunc("/scan", AuthMiddleware(scanHandler))
 	http.HandleFunc("/scanPath", AuthMiddleware(scanPathHandler))

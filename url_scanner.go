@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -30,16 +31,19 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf(time.Now().Format(time.RFC3339)+" Started downloading and scanning URL: %s\n", req.URL)
+	slog.Info("Started downloading and scanning URL", slog.String("url", req.URL))
+	start := time.Now()
 
 	resp, err := http.Get(req.URL)
 	if err != nil {
+		slog.Error("Failed to fetch URL", slog.String("url", req.URL), slog.Any("error", err))
 		writeJSONError(w, fmt.Sprintf("Failed to fetch URL: %v", err), http.StatusBadRequest)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		slog.Error("URL returned non-200 status", slog.String("url", req.URL), slog.Int("status_code", resp.StatusCode))
 		writeJSONError(w, fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode), http.StatusBadRequest)
 		return
 	}
@@ -49,14 +53,19 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	clamdResponse, err := c.ScanStream(resp.Body, abort)
 	
 	if err != nil {
+		slog.Error("ScanStream error", slog.String("url", req.URL), slog.Any("error", err))
 		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	for s := range clamdResponse {
+		slog.Info("Finished scanning URL", 
+			slog.String("url", req.URL), 
+			slog.String("result", s.Status), 
+			slog.String("description", s.Description),
+			slog.Duration("duration_ms", time.Since(start)),
+		)
 		writeScanResponse(w, s, req.URL)
 		break
 	}
-	
-	fmt.Printf(time.Now().Format(time.RFC3339)+" Finished scanning URL: %s\n", req.URL)
 }

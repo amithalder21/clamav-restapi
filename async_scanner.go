@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -33,11 +34,11 @@ func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string, filename
 	go func() {
 		resp, err := http.Post(webhookURL, "application/json", bytes.NewBufferString(payload))
 		if err != nil {
-			fmt.Printf("[Webhook] Failed to send webhook to %s: %v\n", webhookURL, err)
+			slog.Error("Failed to send webhook", slog.String("webhook_url", webhookURL), slog.Any("error", err))
 			return
 		}
 		defer resp.Body.Close()
-		fmt.Printf("[Webhook] Successfully sent result to %s (Status: %d)\n", webhookURL, resp.StatusCode)
+		slog.Info("Successfully sent result to webhook", slog.String("webhook_url", webhookURL), slog.Int("status_code", resp.StatusCode))
 	}()
 }
 
@@ -70,18 +71,19 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Process in background
 	go func() {
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Started scanning URL: %s\n", scanID, req.URL)
+		slog.Info("Started scanning URL", slog.String("scan_id", scanID), slog.String("url", req.URL))
+		start := time.Now()
 		
 		resp, err := http.Get(req.URL)
 		if err != nil {
-			fmt.Printf("[Async %s] Failed to fetch URL: %v\n", scanID, err)
+			slog.Error("Failed to fetch URL", slog.String("scan_id", scanID), slog.String("url", req.URL), slog.Any("error", err))
 			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to fetch URL: %v", err)}, scanID, req.URL)
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			fmt.Printf("[Async %s] URL returned non-200 status: %d\n", scanID, resp.StatusCode)
+			slog.Error("URL returned non-200 status", slog.String("scan_id", scanID), slog.String("url", req.URL), slog.Int("status_code", resp.StatusCode))
 			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode)}, scanID, req.URL)
 			return
 		}
@@ -90,16 +92,21 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(resp.Body, abort)
 		if err != nil {
-			fmt.Printf("[Async %s] ScanStream error: %v\n", scanID, err)
+			slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
 			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, req.URL)
 			return
 		}
 		
 		for s := range clamdResponse {
-			fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Scan result: %v\n", scanID, s)
+			slog.Info("Finished scanning URL", 
+				slog.String("scan_id", scanID), 
+				slog.String("url", req.URL), 
+				slog.String("result", s.Status), 
+				slog.String("description", s.Description),
+				slog.Duration("duration_ms", time.Since(start)),
+			)
 			sendWebhook(req.WebhookURL, s, scanID, req.URL)
 		}
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Finished scanning URL: %s\n", scanID, req.URL)
 	}()
 }
 
@@ -153,27 +160,33 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		
 		f, err := os.Open(filename)
 		if err != nil {
-			fmt.Printf("[Async %s] Failed to open temp file: %v\n", scanID, err)
+			slog.Error("Failed to open temp file", slog.String("scan_id", scanID), slog.Any("error", err))
 			sendWebhook(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Failed to read uploaded file"}, scanID, originalName)
 			return
 		}
 		defer f.Close()
 
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Started scanning: %s\n", scanID, originalName)
+		slog.Info("Started scanning", slog.String("scan_id", scanID), slog.String("filename", originalName))
+		start := time.Now()
 		
 		c := clamd.NewClamd(opts["CLAMD_PORT"])
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(f, abort)
 		if err != nil {
-			fmt.Printf("[Async %s] ScanStream error: %v\n", scanID, err)
+			slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
 			sendWebhook(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, originalName)
 			return
 		}
 		
 		for s := range clamdResponse {
-			fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Scan result for %s: %v\n", scanID, originalName, s)
+			slog.Info("Finished scanning", 
+				slog.String("scan_id", scanID), 
+				slog.String("filename", originalName), 
+				slog.String("result", s.Status), 
+				slog.String("description", s.Description),
+				slog.Duration("duration_ms", time.Since(start)),
+			)
 			sendWebhook(webhookURL, s, scanID, originalName)
 		}
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Finished scanning: %s\n", scanID, originalName)
 	}(tempFile.Name(), header.Filename)
 }

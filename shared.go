@@ -2,9 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/dutchcoders/go-clamd"
 )
@@ -46,7 +45,12 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 		Status:      s.Status,
 		Description: s.Description,
 	})
-	fmt.Printf(time.Now().Format(time.RFC3339)+" Scan result for: %v, %v\n", filename, s)
+	
+	slog.Info("Scan result",
+		slog.String("filename", filename),
+		slog.String("result", s.Status),
+		slog.String("description", s.Description),
+	)
 }
 
 // formatScanResponse returns the JSON string and HTTP status code without writing to a ResponseWriter (useful for webhooks)
