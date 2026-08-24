@@ -3,7 +3,9 @@ services:
   clamav-rest:
     mem_reservation: 262144000
     mem_limit: 1048576000
-    image: ajilaag/clamav-rest
+    image: amithalder21/clamav-restapi
+    environment:
+      - ADMIN_API_KEY=my-super-secret-admin-key
     ports:
       - "9000:9000"
       - "9443:9443"
