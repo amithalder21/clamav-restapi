@@ -19,8 +19,9 @@ type AsyncURLScanRequest struct {
 }
 
 type AsyncResponse struct {
-	ScanID  string `json:"scan_id"`
-	Message string `json:"message"`
+	ScanID   string `json:"scan_id"`
+	Message  string `json:"message"`
+	Filename string `json:"filename,omitempty"`
 }
 
 func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string, filename string) {
@@ -62,8 +63,9 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(AsyncResponse{
-		ScanID:  scanID,
-		Message: "Scan started asynchronously",
+		ScanID:   scanID,
+		Message:  "Scan started asynchronously",
+		Filename: req.URL,
 	})
 
 	// Process in background
@@ -133,8 +135,9 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(AsyncResponse{
-		ScanID:  scanID,
-		Message: "Scan started asynchronously",
+		ScanID:   scanID,
+		Message:  "Scan started asynchronously",
+		Filename: header.Filename,
 	})
 
 	go func(filename string, originalName string) {
