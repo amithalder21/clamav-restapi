@@ -120,8 +120,9 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 
 			start := time.Now()
 			slog.Info("Started scanning file", slog.String("filename", part.FileName()))
+			interceptReader := &ErrorInterceptingReader{Reader: part}
 			var abort chan bool
-			response, err := c.ScanStream(part, abort)
+			response, err := c.ScanStream(interceptReader, abort)
 			if err != nil {
 				slog.Error("ScanStream error", slog.Any("error", err))
 				writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
@@ -129,6 +130,16 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			
 			for s := range response {
+				if interceptReader.Err != nil {
+					if checkMaxBytesError(w, interceptReader.Err) {
+						return
+					}
+				}
+				if s.Status == clamd.RES_PARSE_ERROR {
+					// Fallback check if ClamAV's own limit was hit but MaxBytesReader didn't trip (e.g. decompression limit)
+					writeJSONError(w, "Payload Too Large or Parse Error", http.StatusRequestEntityTooLarge)
+					return
+				}
 				slog.Info("Finished scanning file", 
 					slog.String("filename", part.FileName()),
 					slog.String("result", formatStatus(s.Status)),

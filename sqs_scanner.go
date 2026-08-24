@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -68,7 +69,11 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Error("Failed to load AWS config for S3-Event", slog.Any("error", err))
 			return
 		}
-		s3Client := s3.NewFromConfig(cfg)
+		s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+			if os.Getenv("AWS_ENDPOINT_URL") != "" {
+				o.UsePathStyle = true
+			}
+		})
 		snsClient := sns.NewFromConfig(cfg)
 		processS3Event(s3Client, snsClient, string(bodyBytes), scanID)
 	}()
@@ -84,7 +89,11 @@ func startSQSConsumer(queueURL string) {
 	}
 
 	sqsClient := sqs.NewFromConfig(cfg)
-	s3Client := s3.NewFromConfig(cfg)
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if os.Getenv("AWS_ENDPOINT_URL") != "" {
+			o.UsePathStyle = true
+		}
+	})
 	snsClient := sns.NewFromConfig(cfg)
 
 	for {

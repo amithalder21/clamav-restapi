@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -108,8 +110,24 @@ func formatScanResponse(s *clamd.ScanResult, scanID string, filename string) (st
 	return respJson, statusCode
 }
 
+type ErrorInterceptingReader struct {
+	io.Reader
+	Err error
+}
+
+func (r *ErrorInterceptingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if err != nil && err != io.EOF {
+		r.Err = err
+	}
+	return n, err
+}
+
 // isPrivateIP checks if an IP belongs to private, loopback, link-local or unspecified ranges
 func isPrivateIP(ip net.IP) bool {
+	if os.Getenv("ALLOW_PRIVATE_IPS") == "true" {
+		return false
+	}
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified()
 }
 

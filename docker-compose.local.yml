@@ -1,0 +1,82 @@
+version: "3.8"
+
+# Local test stack for clamav-restapi with dummy AWS services (LocalStack)
+# Usage:
+#   docker compose -f docker-compose.local.yml up --build
+#
+# Once healthy:
+#   - App HTTP:   http://localhost:9000
+#   - App HTTPS:  https://localhost:9443 (self-signed cert)
+#   - LocalStack: http://localhost:4566
+#   - Webhook receiver UI: http://localhost:8080 (logs received webhook POSTs)
+
+services:
+  localstack:
+    image: localstack/localstack:3.4.0
+    container_name: clamrest-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,sqs,sns
+      - DEBUG=0
+      - PERSISTENCE=0
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ./localstack-init:/etc/localstack/init/ready.d
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  webhook-receiver:
+    build:
+      context: ./webhook-receiver
+    container_name: clamrest-webhook-receiver
+    ports:
+      - "8080:8080"
+
+  clamav-rest:
+    build:
+      context: .              # repo root (contains the Dockerfile) — drop this file into repo root
+      dockerfile: Dockerfile
+    container_name: clamrest-app
+    depends_on:
+      localstack:
+        condition: service_healthy
+      webhook-receiver:
+        condition: service_started
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    environment:
+      # --- Core / clamd tuning ---
+      - MAX_SCAN_SIZE=200M
+      - MAX_FILE_SIZE=100M
+      - MAX_RECURSION=16
+      - MAX_FILES=10000
+
+      # --- Auth ---
+      - API_KEY=local-test-api-key
+      - ADMIN_API_KEY=local-test-admin-key
+
+      # --- Path-scan sandbox for /scanPath ---
+      - SCAN_BASE_DIR=/scan-data
+
+      # --- Dummy AWS / LocalStack wiring ---
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/clamrest-scan-queue
+      - SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:clamrest-scan-results
+      - SNS_PUBLISH_INFECTED_ONLY=false
+      - DELETE_INFECTED_FILES=false
+      - SQS_WEBHOOK_URL=http://webhook-receiver:8080/webhook
+      - ALLOW_PRIVATE_IPS=true
+
+    volumes:
+      - scan-data:/scan-data
+
+volumes:
+  scan-data:
