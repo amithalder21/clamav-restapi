@@ -261,7 +261,15 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 				publish = false
 			}
 			if publish {
-				msgBody := "{\"bucket\":\"" + bucket + "\",\"key\":\"" + key + "\",\"av-status\":\"" + scanStatus + "\",\"av-signature\":\"" + scanSignature + "\",\"av-timestamp\":\"" + timestamp + "\"}"
+				snsPayload := map[string]string{
+					"bucket":       bucket,
+					"key":          key,
+					"av-status":    scanStatus,
+					"av-signature": scanSignature,
+					"av-timestamp": timestamp,
+				}
+				msgBytes, _ := json.Marshal(snsPayload)
+				msgBody := string(msgBytes)
 				_, err := snsClient.Publish(context.TODO(), &sns.PublishInput{
 					TopicArn: aws.String(snsTopicARN),
 					Message:  aws.String(msgBody),
