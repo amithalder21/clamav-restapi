@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -33,6 +35,38 @@ type S3EventRecord struct {
 	} `json:"s3"`
 }
 
+func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	scanID := uuid.New().String()
+	
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{
+		"scan_id": scanID,
+		"message": "S3 Event processing started asynchronously",
+	})
+
+	go func() {
+		cfg, err := config.LoadDefaultConfig(context.TODO())
+		if err != nil {
+			fmt.Printf("[API S3-Event] Failed to load AWS config: %v\n", err)
+			return
+		}
+		s3Client := s3.NewFromConfig(cfg)
+		processS3Event(s3Client, string(bodyBytes), scanID)
+	}()
+}
+
 func startSQSConsumer(queueURL string) {
 	fmt.Printf(time.Now().Format(time.RFC3339)+" [SQS] Starting consumer on queue %s\n", queueURL)
 
@@ -49,7 +83,7 @@ func startSQSConsumer(queueURL string) {
 		msgResult, err := sqsClient.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueURL),
 			MaxNumberOfMessages: 10,
-			WaitTimeSeconds:     20, // Long polling
+			WaitTimeSeconds:     20,
 		})
 
 		if err != nil {
@@ -70,19 +104,21 @@ func startSQSConsumer(queueURL string) {
 
 func processSQSMessage(sqsClient *sqs.Client, s3Client *s3.Client, queueURL string, body string, receiptHandle string) {
 	scanID := uuid.New().String()
-	
-	// S3 events might be wrapped in SNS, but typically they are direct JSON
+	processed := processS3Event(s3Client, body, scanID)
+	if processed {
+		deleteMessage(sqsClient, queueURL, receiptHandle)
+	}
+}
+
+func processS3Event(s3Client *s3.Client, body string, scanID string) bool {
 	var s3Event S3Event
 	if err := json.Unmarshal([]byte(body), &s3Event); err != nil {
-		fmt.Printf("[SQS %s] Failed to parse message body: %v\n", scanID, err)
-		deleteMessage(sqsClient, queueURL, receiptHandle)
-		return
+		fmt.Printf("[%s] Failed to parse message body: %v\n", scanID, err)
+		return true // Invalid JSON, delete message
 	}
 
 	if len(s3Event.Records) == 0 {
-		// E.g. "s3:TestEvent"
-		deleteMessage(sqsClient, queueURL, receiptHandle)
-		return
+		return true // e.g. s3:TestEvent, delete message
 	}
 
 	for _, record := range s3Event.Records {
@@ -93,81 +129,87 @@ func processSQSMessage(sqsClient *sqs.Client, s3Client *s3.Client, queueURL stri
 		bucket := record.S3.Bucket.Name
 		key, _ := url.QueryUnescape(record.S3.Object.Key)
 
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [SQS %s] Started scanning S3 Object: s3://%s/%s\n", scanID, bucket, key)
+		fmt.Printf(time.Now().Format(time.RFC3339)+" [%s] Started scanning S3 Object: s3://%s/%s\n", scanID, bucket, key)
 
-		// 1. Fetch Object (Stream)
 		objReq := &s3.GetObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 		}
 		objResp, err := s3Client.GetObject(context.TODO(), objReq)
 		if err != nil {
-			fmt.Printf("[SQS %s] Failed to fetch object s3://%s/%s: %v\n", scanID, bucket, key, err)
+			fmt.Printf("[%s] Failed to fetch object s3://%s/%s: %v\n", scanID, bucket, key, err)
 			continue
 		}
 
-		// 2. Scan Object
 		c := clamd.NewClamd(opts["CLAMD_PORT"])
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(objResp.Body, abort)
 		if err != nil {
-			fmt.Printf("[SQS %s] ScanStream error for s3://%s/%s: %v\n", scanID, bucket, key, err)
+			fmt.Printf("[%s] ScanStream error for s3://%s/%s: %v\n", scanID, bucket, key, err)
 			objResp.Body.Close()
 			continue
 		}
 
 		var scanStatus string
+		var scanSignature string
 		var clamdResult *clamd.ScanResult
 
 		for s := range clamdResponse {
 			clamdResult = s
 			if s.Status == clamd.RES_OK {
 				scanStatus = "CLEAN"
+				scanSignature = "OK"
 			} else {
 				scanStatus = "INFECTED"
+				scanSignature = s.Description
+				if scanSignature == "" {
+					scanSignature = "UNKNOWN-THREAT FOUND"
+				}
 			}
 			break
 		}
 		objResp.Body.Close()
-		fmt.Printf(time.Now().Format(time.RFC3339)+" [SQS %s] Finished scanning s3://%s/%s. Result: %s\n", scanID, bucket, key, scanStatus)
+		fmt.Printf(time.Now().Format(time.RFC3339)+" [%s] Finished scanning s3://%s/%s. Result: %s\n", scanID, bucket, key, scanStatus)
 
-		// 3. Tag Object in S3
+		timestamp := time.Now().UTC().Format("2006/01/02 15:04:05 UTC")
 		tagReq := &s3.PutObjectTaggingInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 			Tagging: &s3types.Tagging{
 				TagSet: []s3types.Tag{
 					{
-						Key:   aws.String("ScanStatus"),
+						Key:   aws.String("av-status"),
 						Value: aws.String(scanStatus),
 					},
 					{
-						Key:   aws.String("ScanDate"),
-						Value: aws.String(time.Now().UTC().Format(time.RFC3339)),
+						Key:   aws.String("av-signature"),
+						Value: aws.String(scanSignature),
+					},
+					{
+						Key:   aws.String("av-timestamp"),
+						Value: aws.String(timestamp),
 					},
 				},
 			},
 		}
+		
 		if _, err := s3Client.PutObjectTagging(context.TODO(), tagReq); err != nil {
-			fmt.Printf("[SQS %s] Failed to tag object s3://%s/%s: %v\n", scanID, bucket, key, err)
+			fmt.Printf("[%s] Failed to tag object s3://%s/%s: %v\n", scanID, bucket, key, err)
 		} else {
-			fmt.Printf("[SQS %s] Successfully tagged s3://%s/%s as %s\n", scanID, bucket, key, scanStatus)
+			fmt.Printf("[%s] Successfully tagged s3://%s/%s as %s\n", scanID, bucket, key, scanStatus)
 		}
 
-		// 4. Send Webhook
 		webhookURL := getWebhookURL(objResp, opts["SQS_WEBHOOK_URL"])
 		if webhookURL != "" && clamdResult != nil {
 			sendWebhook(webhookURL, clamdResult, scanID, fmt.Sprintf("s3://%s/%s", bucket, key))
 		}
 	}
-
-	// 5. Delete Message from SQS
-	deleteMessage(sqsClient, queueURL, receiptHandle)
+	
+	return true
 }
 
 func getWebhookURL(objResp *s3.GetObjectOutput, fallbackURL string) string {
 	if objResp != nil && objResp.Metadata != nil {
-		// S3 metadata keys are lowercased by the SDK usually, but check standard case
 		if url, ok := objResp.Metadata["webhook-url"]; ok {
 			return url
 		}

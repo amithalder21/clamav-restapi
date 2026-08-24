@@ -162,6 +162,7 @@ func main() {
 	http.HandleFunc("/scan-url", AuthMiddleware(scanURLHandler))
 	http.HandleFunc("/scan-async", AuthMiddleware(scanAsyncHandler))
 	http.HandleFunc("/scan-url-async", AuthMiddleware(scanURLAsyncHandler))
+	http.HandleFunc("/scan-s3-event", AuthMiddleware(scanS3EventHandler))
 	
 	// Admin Endpoints
 	http.HandleFunc("/admin/status", AdminAuthMiddleware(adminStatusHandler))
