@@ -49,7 +49,11 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req AsyncURLScanRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit for JSON
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if checkMaxBytesError(w, err) {
+			return
+		}
 		writeJSONError(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -116,8 +120,18 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	maxFileSizeBytes := parseSize(opts["MAX_FILE_SIZE"])
+	if maxFileSizeBytes == 0 {
+		maxFileSizeBytes = 25 * 1024 * 1024 // default 25M
+	}
+	// Add 1MB overhead for multipart boundaries
+	r.Body = http.MaxBytesReader(w, r.Body, maxFileSizeBytes + 1024*1024)
+
 	err := r.ParseMultipartForm(32 << 20) // 32MB max in-memory
 	if err != nil {
+		if checkMaxBytesError(w, err) {
+			return
+		}
 		slog.Error("Failed to parse multipart form", slog.Any("error", err))
 		writeJSONError(w, "Failed to process file upload", http.StatusBadRequest)
 		return
@@ -141,7 +155,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	file.Close()
 	if err != nil {
 		os.Remove(tempFile.Name())
-		writeJSONError(w, "Failed to save file", http.StatusInternalServerError)
+		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	tempFile.Close() // close it for now, we will open it in the goroutine

@@ -21,7 +21,11 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req URLScanRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit for JSON
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if checkMaxBytesError(w, err) {
+			return
+		}
 		writeJSONError(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}

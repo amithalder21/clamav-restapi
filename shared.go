@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dutchcoders/go-clamd"
@@ -164,4 +165,39 @@ func SafeHTTPClient() *http.Client {
 		Transport: transport,
 		Timeout:   5 * time.Minute, // Max 5 minutes for downloading large files
 	}
+}
+
+// parseSize parses size strings like "25M", "1G" into bytes.
+func parseSize(sizeStr string) int64 {
+	sizeStr = strings.TrimSpace(strings.ToUpper(sizeStr))
+	if sizeStr == "" {
+		return 0
+	}
+	
+	multiplier := int64(1)
+	if strings.HasSuffix(sizeStr, "G") || strings.HasSuffix(sizeStr, "GB") {
+		multiplier = 1024 * 1024 * 1024
+		sizeStr = strings.TrimRight(sizeStr, "GB")
+	} else if strings.HasSuffix(sizeStr, "M") || strings.HasSuffix(sizeStr, "MB") {
+		multiplier = 1024 * 1024
+		sizeStr = strings.TrimRight(sizeStr, "MB")
+	} else if strings.HasSuffix(sizeStr, "K") || strings.HasSuffix(sizeStr, "KB") {
+		multiplier = 1024
+		sizeStr = strings.TrimRight(sizeStr, "KB")
+	}
+	
+	var val int64
+	fmt.Sscanf(sizeStr, "%d", &val)
+	return val * multiplier
+}
+
+// checkMaxBytesError checks if the error is an http.MaxBytesError and returns 413.
+// Returns true if the error was handled.
+func checkMaxBytesError(w http.ResponseWriter, err error) bool {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeJSONError(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
+		return true
+	}
+	return false
 }

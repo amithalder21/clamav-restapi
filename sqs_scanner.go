@@ -43,8 +43,12 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit for JSON
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		if checkMaxBytesError(w, err) {
+			return
+		}
 		writeJSONError(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
