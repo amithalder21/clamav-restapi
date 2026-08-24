@@ -148,6 +148,11 @@ func main() {
 
 	fmt.Printf("Starting clamav rest bridge\n")
 	fmt.Printf("Connecting to clamd on %v\n", opts["CLAMD_PORT"])
+	
+	if sqsQueueURL, ok := opts["SQS_QUEUE_URL"]; ok && sqsQueueURL != "" {
+		go startSQSConsumer(sqsQueueURL)
+	}
+	
 	waitForClamD(opts["CLAMD_PORT"], 1)
 
 	fmt.Printf("Connected to clamd on %v\n", opts["CLAMD_PORT"])
