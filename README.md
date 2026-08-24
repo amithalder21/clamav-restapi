@@ -409,11 +409,31 @@ go mod tidy
 go build -v .
 ```
 
-To test the locally built Docker image:
+To test the locally built Docker image standalone:
 ```bash
 docker build -t amithalder/clamav-restapi:alpine-latest .
 docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi amithalder/clamav-restapi:alpine-latest
 ```
+
+### Comprehensive Local Test Rig
+
+This project includes a full Docker Compose test rig that spins up the API, a mock webhook receiver, and LocalStack (for S3 and SQS testing). It allows you to run end-to-end regression tests locally, ensuring features like async scanning, SQS event polling, S3 object tagging, and SSRF protections work properly.
+
+To run the full integration suite:
+
+```bash
+# 1. Spin up the local test environment (API, LocalStack, Webhook Receiver)
+docker compose -f docker-compose.local.yml up --build -d
+
+# 2. Run the automated test script
+chmod +x test-endpoints.sh
+./test-endpoints.sh
+
+# 3. Tear down the environment when finished
+docker compose -f docker-compose.local.yml down -v
+```
+
+See [test-rig-local/README-LOCAL-TESTING.md](test-rig-local/README-LOCAL-TESTING.md) for more details.
 
 ## References
 - https://www.clamav.net
