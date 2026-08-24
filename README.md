@@ -461,6 +461,10 @@ Below is the complete list of available options that can be used to customize yo
 | `DELETE_INFECTED_FILES` | If `true`, the scanner will actively delete infected files from S3 rather than just tagging them. |
 | `SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
 | `SNS_PUBLISH_INFECTED_ONLY` | If `true`, the scanner will only publish to SNS if a file is infected. |
+| `AWS_REGION` | The AWS Region your queue and bucket reside in (e.g. `us-east-1`). Required if using AWS features outside of Fargate. |
+| `AWS_ACCESS_KEY_ID` | Your AWS Access Key. Not required if running inside ECS Fargate with a Task Role attached. |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS Secret Key. Not required if running inside ECS Fargate with a Task Role attached. |
+| `AWS_SESSION_TOKEN` | Your AWS Session Token (for temporary creds). Not required if using standard IAM User or Task Role. |
 | `CLAMD_PORT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |
