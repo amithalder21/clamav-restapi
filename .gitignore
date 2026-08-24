@@ -2,4 +2,5 @@ target
 src
 *.swp
 clamrest
+clamav-rest
 pyenv
