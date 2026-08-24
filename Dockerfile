@@ -9,15 +9,16 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o clamav-rest .
 
 # Runtime stage
-FROM alpine:edge
+FROM clamav/clamav:1.5.4_base
+
+USER root
 
 # Set timezone
 RUN apk add --no-cache tzdata \
     && ln -s /usr/share/zoneinfo/Europe/Zurich /etc/localtime
 
-# Install ClamAV
-RUN apk add --no-cache clamav clamav-libunrar \
-    && mkdir -p /run/clamav \
+# Create run directory if not exists
+RUN mkdir -p /run/clamav \
     && chown clamav:clamav /run/clamav
 
 # Configure clamAV to run in foreground with port 3310

@@ -1,8 +1,8 @@
 # ClamAV REST API
 
-This project provides a two-in-one Docker image that runs the open-source virus scanner [ClamAV](https://www.clamav.net/), automatically updates virus definitions in the background, and provides a REST API interface to interact with the ClamAV process.
+[ClamAV®](https://www.clamav.net/) is an open-source antivirus engine for detecting trojans, viruses, malware & other malicious threats. [download](https://www.clamav.net/downloads) The latest stable release is version 1.5.4.
 
-It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), and strictly backward compatible with standard ClamAV REST endpoints.
+This project provides a two-in-one Docker image that runs this engine, automatically updates virus definitions in the background via `freshclam`, and provides a stateless REST API interface to interact with the ClamAV process.
 
 ## Table of Contents
 
