@@ -34,76 +34,64 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 This flowchart maps out every single API endpoint, background worker, and AWS integration that the container supports:
 
 ```mermaid
-flowchart TB
-    %% External Entities
-    UserClient([Client Apps / Scripts])
-    EventBridge([AWS EventBridge])
-    AWS_SQS[(AWS SQS Queue)]
-    AWS_S3[(AWS S3 Bucket)]
-    Webhooks([Webhook Endpoints])
-    SNS([AWS SNS Topics])
+sequenceDiagram
+    participant Client as User / API Gateway
+    participant EventBridge as AWS EventBridge
+    participant S3 as AWS S3
+    participant SQS as AWS SQS
+    participant ClamAV as ClamAV Fargate (REST API)
+    participant SNS as AWS SNS Topic
+    participant Webhook as Webhook Endpoint
 
-    %% Main Container Group
-    subgraph Fargate[ClamAV REST API (Docker Container)]
-        direction TB
-        
-        %% Standard Endpoints
-        EP_Scan["POST /scan"]
-        EP_ScanAsync["POST /scan-async"]
-        EP_ScanUrl["POST /scan-url-async"]
-        EP_ScanPath["GET /scanPath"]
-        
-        %% S3 Event Endpoints
-        EP_ScanS3["POST /scan-s3-event"]
-        SQSPoller[["Background SQS Poller"]]
-        
-        %% Admin Endpoints
-        subgraph AdminAPI[Admin API (Requires X-API-Key)]
-            EP_Status["GET /admin/status"]
-            EP_Reload["GET /admin/reload"]
-        end
-
-        %% Core Engine
-        ClamDaemon((ClamAV Daemon))
+    %% 1. Synchronous Scan
+    rect rgb(240, 248, 255)
+        Note over Client, ClamAV: 1. Synchronous Local/File Scan
+        Client->>ClamAV: POST /scan (Multipart File) or GET /scanPath
+        ClamAV->>ClamAV: Analyzes File
+        ClamAV-->>Client: HTTP 200 OK (JSON Result)
     end
 
-    %% Ingress Data Flows
-    UserClient -- "Multipart File" --> EP_Scan
-    UserClient -- "Multipart File" --> EP_ScanAsync
-    UserClient -- "JSON URL" --> EP_ScanUrl
-    UserClient -- "Local Path" --> EP_ScanPath
-    UserClient -- "Status Check" --> AdminAPI
+    %% 2. Asynchronous Scan
+    rect rgb(240, 255, 240)
+        Note over Client, Webhook: 2. Asynchronous File/URL Scan
+        Client->>ClamAV: POST /scan-async or /scan-url-async
+        ClamAV-->>Client: HTTP 202 Accepted (Scan ID)
+        ClamAV->>ClamAV: Downloads & Analyzes in background
+        ClamAV->>Webhook: POSTs JSON Result to webhook_url
+    end
 
-    %% S3 Event Data Flows
-    AWS_S3 -- "ObjectCreated Event" --> AWS_SQS
-    AWS_SQS -- "Long-Polls for Events" --> SQSPoller
-    EventBridge -- "HTTP Push S3 Event" --> EP_ScanS3
+    %% 3. Event-Driven S3 Push (EventBridge)
+    rect rgb(255, 240, 245)
+        Note over EventBridge, S3: 3. EventBridge S3 Push Notification
+        EventBridge->>ClamAV: POST /scan-s3-event (S3 JSON Event)
+        ClamAV-->>EventBridge: HTTP 202 Accepted
+        ClamAV->>S3: Streams S3 Object (s3:GetObject)
+        ClamAV->>ClamAV: Analyzes File
+        ClamAV->>S3: Applies av-status Tags (s3:PutObjectTagging)
+    end
 
-    %% Internal Processing
-    EP_Scan --> ClamDaemon
-    EP_ScanPath --> ClamDaemon
-    EP_ScanAsync --> ClamDaemon
-    EP_ScanUrl -. "Downloads File" .-> ClamDaemon
-    EP_ScanS3 -. "Streams directly" .-> ClamDaemon
-    SQSPoller -. "Streams directly" .-> ClamDaemon
-    AdminAPI -. "Manages Engine" .-> ClamDaemon
+    %% 4. Event-Driven SQS Pull (Autonomous)
+    rect rgb(255, 250, 205)
+        Note over S3, SNS: 4. Autonomous SQS Background Poller (Recommended)
+        S3->>SQS: "ObjectCreated" Event
+        ClamAV->>SQS: Long-polls (sqs:ReceiveMessage)
+        ClamAV->>S3: Streams S3 Object (s3:GetObject)
+        ClamAV->>ClamAV: Analyzes File
+        ClamAV->>S3: Merges & Applies Tags (s3:PutObjectTagging)
+        opt If INFECTED & DELETE_INFECTED_FILES=true
+            ClamAV->>S3: Deletes File (s3:DeleteObject)
+        end
+        opt If SNS_TOPIC_ARN is set
+            ClamAV->>SNS: Publishes JSON Scan Alert
+        end
+    end
 
-    %% Sync Outputs
-    EP_Scan -- "Sync JSON Result" --> UserClient
-    EP_ScanPath -- "Sync JSON Result" --> UserClient
-    AdminAPI -- "Sync JSON Result" --> UserClient
-    
-    %% Async Outputs (Webhooks)
-    EP_ScanAsync -- "POST Result" --> Webhooks
-    EP_ScanUrl -- "POST Result" --> Webhooks
-    EP_ScanS3 -- "POST Result" --> Webhooks
-    SQSPoller -- "POST Result" --> Webhooks
-    
-    %% AWS Outputs (S3 / SNS)
-    SQSPoller -- "Applies Tags / Deletes INFECTED" --> AWS_S3
-    EP_ScanS3 -- "Applies Tags / Deletes INFECTED" --> AWS_S3
-    SQSPoller -- "Publishes JSON Alert" --> SNS
-    EP_ScanS3 -- "Publishes JSON Alert" --> SNS
+    %% 5. Admin API
+    rect rgb(245, 245, 245)
+        Note over Client, ClamAV: 5. Admin API
+        Client->>ClamAV: GET /admin/status (with X-API-Key)
+        ClamAV-->>Client: HTTP 200 OK (Daemon Health & Metrics)
+    end
 ```
 
 ## Installation
