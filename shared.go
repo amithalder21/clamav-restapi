@@ -18,6 +18,7 @@ func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
 
 // ScanResponse is the standard response payload for all scan endpoints
 type ScanResponse struct {
+	Filename    string `json:"filename,omitempty"`
 	Status      string `json:"status"`
 	Description string `json:"description"`
 	ScanID      string `json:"scan_id,omitempty"`
@@ -41,6 +42,7 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 	}
 	
 	json.NewEncoder(w).Encode(ScanResponse{
+		Filename:    filename,
 		Status:      s.Status,
 		Description: s.Description,
 	})
@@ -48,8 +50,9 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 }
 
 // formatScanResponse returns the JSON string and HTTP status code without writing to a ResponseWriter (useful for webhooks)
-func formatScanResponse(s *clamd.ScanResult, scanID string) (string, int) {
+func formatScanResponse(s *clamd.ScanResult, scanID string, filename string) (string, int) {
 	respBytes, _ := json.Marshal(ScanResponse{
+		Filename:    filename,
 		Status:      s.Status,
 		Description: s.Description,
 		ScanID:      scanID,

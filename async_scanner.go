@@ -23,11 +23,11 @@ type AsyncResponse struct {
 	Message string `json:"message"`
 }
 
-func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string) {
+func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string, filename string) {
 	if webhookURL == "" {
 		return
 	}
-	payload, _ := formatScanResponse(s, scanID)
+	payload, _ := formatScanResponse(s, scanID, filename)
 	// We run this in a fire-and-forget goroutine to avoid blocking the clamd stream processing
 	go func() {
 		resp, err := http.Post(webhookURL, "application/json", bytes.NewBufferString(payload))
@@ -87,7 +87,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		
 		for s := range clamdResponse {
 			fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Scan result: %v\n", scanID, s)
-			sendWebhook(req.WebhookURL, s, scanID)
+			sendWebhook(req.WebhookURL, s, scanID, req.URL)
 		}
 		fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Finished scanning URL: %s\n", scanID, req.URL)
 	}()
@@ -159,7 +159,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		
 		for s := range clamdResponse {
 			fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Scan result for %s: %v\n", scanID, originalName, s)
-			sendWebhook(webhookURL, s, scanID)
+			sendWebhook(webhookURL, s, scanID, originalName)
 		}
 		fmt.Printf(time.Now().Format(time.RFC3339)+" [Async %s] Finished scanning: %s\n", scanID, originalName)
 	}(tempFile.Name(), header.Filename)
