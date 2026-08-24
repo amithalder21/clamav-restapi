@@ -16,11 +16,15 @@ func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-// writeScanResponse writes the backward-compatible JSON response and status code
+// ScanResponse is the standard response payload for all scan endpoints
+type ScanResponse struct {
+	Status      string `json:"status"`
+	Description string `json:"description"`
+}
+
+// writeScanResponse writes a standardized JSON response and status code
 func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	// The original code uses a JSON format with unquoted keys, maintaining this for backwards compatibility
-	respJson := fmt.Sprintf("{ Status: \"%s\", Description: \"%s\" }", s.Status, s.Description)
 	
 	switch s.Status {
 	case clamd.RES_OK:
@@ -34,13 +38,21 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 	default:
 		w.WriteHeader(http.StatusNotImplemented)
 	}
-	fmt.Fprint(w, respJson)
+	
+	json.NewEncoder(w).Encode(ScanResponse{
+		Status:      s.Status,
+		Description: s.Description,
+	})
 	fmt.Printf(time.Now().Format(time.RFC3339)+" Scan result for: %v, %v\n", filename, s)
 }
 
 // formatScanResponse returns the JSON string and HTTP status code without writing to a ResponseWriter (useful for webhooks)
 func formatScanResponse(s *clamd.ScanResult) (string, int) {
-	respJson := fmt.Sprintf("{ Status: \"%s\", Description: \"%s\" }", s.Status, s.Description)
+	respBytes, _ := json.Marshal(ScanResponse{
+		Status:      s.Status,
+		Description: s.Description,
+	})
+	respJson := string(respBytes)
 	statusCode := http.StatusNotImplemented
 	switch s.Status {
 	case clamd.RES_OK:

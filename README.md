@@ -57,7 +57,7 @@ HTTP/1.1 406 Not Acceptable
 Content-Type: application/json; charset=utf-8
 Content-Length: 56
 
-{ Status: "FOUND", Description: "Eicar-Test-Signature" }
+{ "status": "FOUND", "description": "Eicar-Test-Signature" }
 ```
 
 Test that the service returns 200 for a clean file.
@@ -71,7 +71,7 @@ HTTP/1.1 200 OK
 Content-Type: application/json; charset=utf-8
 Content-Length: 33
 
-{ Status: "OK", Description: "" }
+{ "status": "OK", "description": "" }
 ```
 
 ### Synchronous URL Scan
@@ -85,7 +85,7 @@ HTTP/1.1 406 Not Acceptable
 Content-Type: application/json; charset=utf-8
 Content-Length: 56
 
-{ Status: "FOUND", Description: "Eicar-Test-Signature" }
+{ "status": "FOUND", "description": "Eicar-Test-Signature" }
 ```
 
 ### Asynchronous Scanning (Webhooks)
