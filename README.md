@@ -1,130 +1,156 @@
-# Deprecation Notice
+# ClamAV REST API
 
-This project has been moved to https://github.com/ajilach/clamav-rest. Please follow that one instead as this one here will get deleted soon.
+This project provides a two-in-one Docker image that runs the open-source virus scanner [ClamAV](https://www.clamav.net/), automatically updates virus definitions in the background, and provides a REST API interface to interact with the ClamAV process.
 
-# Table of Contents
+It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), and strictly backward compatible with standard ClamAV REST endpoints.
 
-- [Introduction](#introduction)
-- [Prerequisites](#prerequisites)
+## Table of Contents
+
+- [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-    - [Status Codes](#status-codes)
+    - [Synchronous File Scan](#synchronous-file-scan)
+    - [Synchronous URL Scan](#synchronous-url-scan)
+    - [Asynchronous Scanning (Webhooks)](#asynchronous-scanning-webhooks)
+- [Status Codes](#status-codes)
+- [Authentication](#authentication)
 - [Configuration](#configuration)
-    - [Environment Variables](#environment-variables)
-    - [Networking](#networking)  
-- [Maintenance / Monitoring](#maintenance--monitoring)
-    - [Shell Access](#shell-access)
+- [Maintenance & Monitoring](#maintenance--monitoring)
+- [Developing](#developing)
 
-- [Developing](#developing)    
-- [References](#references)
+## Features
 
-# Introduction
+- **Multi-Stage Docker Builds**: Available in Alpine and Rocky Linux bases, optimized for minimal image sizes.
+- **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks (ideal for AWS ECS Fargate).
+- **Cloud URL Scanning**: Stream files directly from remote URLs to ClamAV without buffering in memory.
+- **API Key Authentication**: Optional security layer to restrict access.
+- **Prometheus Metrics**: Built-in `/metrics` endpoint.
 
-This is two in one docker image so it runs open source virus scanner ClamAV (https://www.clamav.net/), automatic virus definition updates as background process and REST API interface to interact with ClamAV process.
+## Installation
 
-# Prerequisites
-
-This container doesn't do much on it's own unless you use an additional service or communicator to talk to it!
-
-# Installation
-
-Automated builds of the image are available on [Registry](https://hub.docker.com/r/ajilaag/clamav-rest) and is the recommended method of installation.
+Automated builds of the image are available on Docker Hub and can be built locally.
 
 ```bash
-docker pull hub.docker.com/ajilaag/clamav-rest:(imagetag)
+docker pull ajilaag/clamav-rest:latest
 ```
 
-The following image tags are available:
-* `latest` - Most recent release of ClamAV with REST API
-
-# Quick Start
-
-Run clamav-rest docker image:
+Or build it from source:
 ```bash
-docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-rest ajilaag/clamav-rest
+docker build -t clamav-rest .
 ```
 
-Test that service detects common test virus signature:
+## Quick Start
 
-**HTTP**
+Run the clamav-rest docker image:
+```bash
+docker run -d -p 9000:9000 -p 9443:9443 --name clamav-rest clamav-rest
+```
+
+### Synchronous File Scan
+
+Test that the service detects a common test virus signature.
+
+**HTTP:**
 ```bash
 $ curl -i -F "file=@eicar.com.txt" http://localhost:9000/scan
-HTTP/1.1 100 Continue
 
+HTTP/1.1 100 Continue
 HTTP/1.1 406 Not Acceptable
 Content-Type: application/json; charset=utf-8
-Date: Mon, 28 Aug 2017 20:22:34 GMT
 Content-Length: 56
 
 { Status: "FOUND", Description: "Eicar-Test-Signature" }
 ```
 
-**HTTPS**
+Test that the service returns 200 for a clean file.
+
+**HTTP:**
 ```bash
-$ curl -i -k -F "file=@eicar.com.txt" https://localhost:9443/scan
+$ curl -i -F "file=@clean_file.txt" http://localhost:9000/scan
+
 HTTP/1.1 100 Continue
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 33
+
+{ Status: "OK", Description: "" }
+```
+
+### Synchronous URL Scan
+
+You can pass a URL (e.g., an S3 pre-signed URL). The API will stream the file directly to ClamAV without buffering it in memory.
+
+```bash
+$ curl -i -X POST -H "Content-Type: application/json" -d '{"url":"https://secure.eicar.org/eicar.com.txt"}' http://localhost:9000/scan-url
 
 HTTP/1.1 406 Not Acceptable
 Content-Type: application/json; charset=utf-8
-Date: Mon, 28 Aug 2017 20:22:34 GMT
 Content-Length: 56
 
 { Status: "FOUND", Description: "Eicar-Test-Signature" }
 ```
 
-Test that service returns 200 for clean file:
+### Asynchronous Scanning (Webhooks)
 
-**HTTP**
+For very large files, or deployments on stateless infrastructure like AWS ECS Fargate, you can use the asynchronous endpoints. These endpoints return a `202 Accepted` status immediately and process the file in the background.
+
+Once the scan finishes, the container will send an HTTP POST request to your specified `webhook_url` containing the final scan result JSON.
+
+**Async File Upload:**
 ```bash
-$ curl -i -F "file=@clamrest.go" http://localhost:9000/scan
+curl -i -F "file=@eicar.com.txt" -F "webhook_url=https://your-webhook-endpoint.com/callback" http://localhost:9000/scan-async
 
-HTTP/1.1 100 Continue
-
-HTTP/1.1 200 OK
+HTTP/1.1 202 Accepted
 Content-Type: application/json; charset=utf-8
-Date: Mon, 28 Aug 2017 20:23:16 GMT
-Content-Length: 33
 
-{ Status: "OK", Description: "" }
-```
-**HTTPS**
-```bash
-$ curl -i -k -F "file=@clamrest.go" https://localhost:9443/scan
-
-HTTP/1.1 100 Continue
-
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-Date: Mon, 28 Aug 2017 20:23:16 GMT
-Content-Length: 33
-
-{ Status: "OK", Description: "" }
+{"scan_id":"uuid-string","message":"Scan started asynchronously"}
 ```
 
-
+**Async URL Scan:**
+```bash
+curl -i -X POST -H "Content-Type: application/json" \
+  -d '{"url":"https://secure.eicar.org/eicar.com.txt", "webhook_url":"https://your-webhook-endpoint.com/callback"}' \
+  http://localhost:9000/scan-url-async
+```
 
 ## Status Codes
-- 200 - clean file = no KNOWN infections
-- 400 - ClamAV returned general error for file
-- 406 - INFECTED
-- 412 - unable to parse file
-- 501 - unknown request
 
-# Configuration
+The API strict adheres to the following status codes for all scan endpoints and webhook payloads:
+- `200` - Clean file (no known infections)
+- `400` - ClamAV returned a general error for the file
+- `406` - INFECTED
+- `412` - Unable to parse the file
+- `501` - Unknown request
 
-## Environment Variables
+## Authentication
+
+By default, the API is completely open. If you wish to secure your endpoints, start the container with the `API_KEY` environment variable.
+
+```bash
+docker run -d -p 9000:9000 -e API_KEY=your-secret-key --name clamav-rest clamav-rest
+```
+
+Clients must then provide the key via the `X-API-Key` or `Authorization` header:
+```bash
+curl -H "X-API-Key: your-secret-key" -F "file=@eicar.com.txt" http://localhost:9000/scan
+```
+
+## Configuration
+
+### Environment Variables
 
 Below is the complete list of available options that can be used to customize your installation.
 
 | Parameter | Description |
 |-----------|-------------|
+| `API_KEY` | Secures the REST API with a required API key. |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `100M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `25M` |
 | `MAX_RECURSION` | How many nested archives to scan - Default `16` |
-| `MAX_FILES` | Number of files to scan withn archive - Default `10000` |
+| `MAX_FILES` | Number of files to scan within an archive - Default `10000` |
 | `MAX_EMBEDDEDPE` | Maximum file size for embedded PE - Default `10M` |
 | `MAX_HTMLNORMALIZE` | Maximum size of HTML to normalize - Default `10M` |
-| `MAX_HTMLNOTAGS` | Maximum size of Normlized HTML File to scan- Default `2M` |
+| `MAX_HTMLNOTAGS` | Maximum size of Normalized HTML File to scan - Default `2M` |
 | `MAX_SCRIPTNORMALIZE` | Maximum size of a Script to normalize - Default `5M` |
 | `MAX_ZIPTYPERCG` | Maximum size of ZIP to reanalyze type recognition - Default `1M` |
 | `MAX_PARTITIONS` | How many partitions per Raw disk to scan - Default `50` |
@@ -133,41 +159,42 @@ Below is the complete list of available options that can be used to customize yo
 | `PCRE_RECMATCHLIMIT` | Maximum Recursive Match Calls to PCRE - Default `2000` |
 | `SIGNATURE_CHECKS` | Check times per day for a new database signature. Must be between 1 and 50. - Default `24` |
 
-## Networking
+### Networking
 
 | Port | Description |
 |-----------|-------------|
-| `3310`    | ClamD Listening Port |
+| `9000`    | HTTP REST API Port |
+| `9443`    | HTTPS REST API Port |
+| `3310`    | Internal ClamD Listening Port |
 
-# Maintenance / Monitoring
+## Maintenance & Monitoring
 
-## Shell Access
+### Shell Access
 
-For debugging and maintenance purposes you may want access the containers shell. 
-
+For debugging and maintenance purposes, you may access the container shell:
 ```bash
-docker exec -it (whatever your container name is e.g. clamav-rest) /bin/sh
-```
-## Prometheus
-
-[Prometheus metrics](https://prometheus.io/docs/guides/go-application/) were implemented, which can be retrieved as follows
-
-**HTTP**:
-curl http://localhost:9000/metrics
-
-**HTTPS:**
-curl https://localhost:9443/metrics
-
-# Developing
-
-Build golang (linux) binary and docker image:
-
-```bash
-# env GOOS=linux GOARCH=amd64 go build
-docker build . -t clamav-go-rest
-docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-rest clamav-go-rest
+docker exec -it clamav-rest /bin/sh
 ```
 
-# References
+### Prometheus
 
-* https://www.clamav.net
+Prometheus metrics are natively supported and can be scraped via:
+- **HTTP**: `curl http://localhost:9000/metrics`
+- **HTTPS**: `curl https://localhost:9443/metrics`
+
+## Developing
+
+To build the project locally (requires Go 1.23+):
+```bash
+go mod tidy
+go build -v .
+```
+
+To build and test the Docker image:
+```bash
+docker build -t clamav-rest .
+docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-rest clamav-rest
+```
+
+## References
+- https://www.clamav.net
