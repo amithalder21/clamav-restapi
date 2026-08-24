@@ -51,8 +51,21 @@ docker run -d \
   -p 9000:9000 \
   -e API_KEY="my-secret-key" \
   -e ADMIN_API_KEY="my-admin-key" \
-  -e MAX_FILE_SIZE="50M" \
-  -e MAX_SCAN_SIZE="150M" \
+  -e CLAMD_PORT="tcp://localhost:3310" \
+  -e MAX_FILE_SIZE="25M" \
+  -e MAX_SCAN_SIZE="100M" \
+  -e MAX_RECURSION="16" \
+  -e MAX_FILES="10000" \
+  -e MAX_EMBEDDEDPE="10M" \
+  -e MAX_HTMLNORMALIZE="10M" \
+  -e MAX_HTMLNOTAGS="2M" \
+  -e MAX_SCRIPTNORMALIZE="5M" \
+  -e MAX_ZIPTYPERCG="1M" \
+  -e MAX_PARTITIONS="50" \
+  -e MAX_ICONSPE="100" \
+  -e PCRE_MATCHLIMIT="100000" \
+  -e PCRE_RECMATCHLIMIT="2000" \
+  -e SIGNATURE_CHECKS="24" \
   --name clamav-restapi \
   amithalder/clamav-restapi:latest
 ```
