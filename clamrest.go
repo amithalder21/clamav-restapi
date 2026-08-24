@@ -21,6 +21,11 @@ func init() {
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
 	c := clamd.NewClamd(opts["CLAMD_PORT"])
 
 	response, err := c.Stats()
