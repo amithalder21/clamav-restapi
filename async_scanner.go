@@ -75,15 +75,23 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		resp, err := http.Get(req.URL)
 		if err != nil {
 			fmt.Printf("[Async %s] Failed to fetch URL: %v\n", scanID, err)
+			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to fetch URL: %v", err)}, scanID, req.URL)
 			return
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf("[Async %s] URL returned non-200 status: %d\n", scanID, resp.StatusCode)
+			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode)}, scanID, req.URL)
+			return
+		}
 
 		c := clamd.NewClamd(opts["CLAMD_PORT"])
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(resp.Body, abort)
 		if err != nil {
 			fmt.Printf("[Async %s] ScanStream error: %v\n", scanID, err)
+			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, req.URL)
 			return
 		}
 		
@@ -146,6 +154,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		f, err := os.Open(filename)
 		if err != nil {
 			fmt.Printf("[Async %s] Failed to open temp file: %v\n", scanID, err)
+			sendWebhook(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Failed to read uploaded file"}, scanID, originalName)
 			return
 		}
 		defer f.Close()
@@ -157,6 +166,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		clamdResponse, err := c.ScanStream(f, abort)
 		if err != nil {
 			fmt.Printf("[Async %s] ScanStream error: %v\n", scanID, err)
+			sendWebhook(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, originalName)
 			return
 		}
 		

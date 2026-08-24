@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -42,7 +41,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 	paths, ok := r.URL.Query()["path"]
 	if !ok || len(paths[0]) < 1 {
-		log.Println("Url Param 'path' is missing")
+		writeJSONError(w, "Url Param 'path' is missing", http.StatusBadRequest)
 		return
 	}
 
@@ -52,12 +51,7 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 	response, err := c.AllMatchScanFile(path)
 
 	if err != nil {
-		errJson, eErr := json.Marshal(err)
-		if eErr != nil {
-			fmt.Println(eErr)
-			return
-		}
-		fmt.Fprint(w, string(errJson))
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
