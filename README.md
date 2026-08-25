@@ -36,7 +36,7 @@ This sequence diagram maps out every single API endpoint, background worker, and
 
 ```mermaid
 sequenceDiagram
-    participant Client as User / API Gateway
+    participant Client as User / API
     participant EventBridge as AWS EventBridge
     participant S3 as AWS S3
     participant SQS as AWS SQS
