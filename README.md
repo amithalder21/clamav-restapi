@@ -22,6 +22,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Event-Driven AWS Architecture**: Natively integrates with AWS S3, SQS, and EventBridge to perform Zero-HTTP polling, native S3 streaming, and S3 Object Auto-Tagging (`av-status`, `av-signature`).
 - **Advanced S3 Security**: Automatically streams files from S3 without saving to disk, non-destructively merges existing tags with virus results, actively deletes infected files, and alerts security teams via AWS SNS.
 - **Enterprise Audit Logging**: Full support for native structured JSON logs (`log/slog`), directly indexing `scan_id`, `duration_ms`, `result`, and `client_id` instantly into CloudWatch for security dashboards.
+- **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files, strict HTTP body size limits (`MaxBytesReader`) to prevent memory/disk exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
 - **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks.
 - **Cloud URL Scanning**: Stream files directly from remote URLs to ClamAV without buffering in memory.
 - **API Key Authentication**: Optional security layer to restrict access.
@@ -458,7 +459,9 @@ docker compose -f docker-compose.local.yml down -v
 | 9 | `POST /scan-async` | EICAR upload → 202, webhook receives INFECTED result |
 | 10 | `POST /scan-url-async` | same, via URL fetch |
 | 11 | `GET /admin/status` | wrong admin key → 403, correct key → 200 |
-| 12 | S3 upload → SQS → scan → tag → webhook | full async pipeline |
+| 12 | `POST /admin/update-signatures` | freshclam triggered → 202 |
+| 13 | `POST /admin/reload` | clamd reloaded → 200 |
+| 14 | S3 upload → SQS → scan → tag → webhook | full async pipeline |
 
 #### Running the Go unit tests
 
