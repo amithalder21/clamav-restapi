@@ -117,8 +117,15 @@ echo
 echo "== 11. /admin/* — wrong admin key rejected, right key works =="
 code=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/admin/status" -H "X-API-Key: wrong-key")
 check "GET /admin/status wrong key -> 403" 403 "$code"
+
 code=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/admin/status" -H "X-API-Key: $ADMIN_KEY")
 check "GET /admin/status correct key -> 200" 200 "$code"
+
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/admin/update-signatures" -H "X-API-Key: $ADMIN_KEY")
+check "POST /admin/update-signatures -> 202 Accepted" 202 "$code"
+
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/admin/reload" -H "X-API-Key: $ADMIN_KEY")
+check "POST /admin/reload -> 200 OK" 200 "$code"
 echo
 
 echo "== 12. S3 -> SQS -> scan -> tag -> webhook (full pipeline) =="
