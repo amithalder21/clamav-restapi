@@ -71,7 +71,7 @@ services:
       - SQS_QUEUE_URL=http://localstack:4566/000000000000/clamrest-scan-queue
       - SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:clamrest-scan-results
       - SNS_PUBLISH_INFECTED_ONLY=false
-      - DELETE_INFECTED_FILES=false
+      - DELETE_INFECTED_FILES=true
       - SQS_WEBHOOK_URL=http://webhook-receiver:8080/webhook
       - ALLOW_PRIVATE_IPS=true
 

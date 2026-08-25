@@ -24,6 +24,10 @@ QUEUE_ARN=$(awslocal sqs get-queue-attributes --queue-url "$QUEUE_URL" --attribu
 
 echo "[init] Creating SNS topic: $TOPIC_NAME"
 awslocal sns create-topic --name "$TOPIC_NAME"
+TOPIC_ARN=$(awslocal sns list-topics --query "Topics[?contains(TopicArn, '$TOPIC_NAME')].TopicArn" --output text)
+
+echo "[init] Subscribing webhook-receiver to SNS topic"
+awslocal sns subscribe --topic-arn "$TOPIC_ARN" --protocol http --notification-endpoint http://webhook-receiver:8080/sns
 
 echo "[init] Allowing S3 to publish to SQS queue"
 awslocal sqs set-queue-attributes --queue-url "$QUEUE_URL" --attributes '{

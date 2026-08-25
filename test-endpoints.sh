@@ -143,23 +143,81 @@ if [ $? -eq 0 ]; then
   echo "  uploaded eicar-test.txt to S3, waiting for SQS consumer to pick it up..."
   sleep 4
   
-  # Check if S3 object was tagged properly
-  TAGS=$(python3 -c "
-import boto3
+  # Check if S3 object was deleted (because DELETE_INFECTED_FILES=true)
+  STATUS=$(python3 -c "
+import boto3, botocore
 s3 = boto3.client('s3', endpoint_url='http://localhost:4566', region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test')
-tags = s3.get_object_tagging(Bucket='clamrest-uploads', Key='eicar-test.txt')['TagSet']
-print([t['Value'] for t in tags if t['Key'] == 'av-status'][0])
+try:
+    s3.head_object(Bucket='clamrest-uploads', Key='eicar-test.txt')
+    print('EXISTS')
+except botocore.exceptions.ClientError as e:
+    if e.response['Error']['Code'] == '404':
+        print('DELETED')
+    else:
+        print('ERROR')
 " 2>/dev/null)
 
-  if [ "$TAGS" = "INFECTED" ]; then
-    green "  PASS  S3 object was successfully tagged as INFECTED"
+  if [ "$STATUS" = "DELETED" ]; then
+    green "  PASS  Infected S3 object was successfully auto-deleted"
     PASS=$((PASS+1))
   else
-    red   "  FAIL  S3 object was not tagged — check 'docker compose logs clamav-rest'"
+    red   "  FAIL  S3 object was NOT deleted (got $STATUS)"
     FAIL=$((FAIL+1))
   fi
+
+  # Check if SNS notification reached webhook-receiver
+  curl -s http://localhost:8080/ | grep -q 'clamrest-uploads/eicar-test.txt' \
+    && green "  PASS  SNS notification successfully delivered to webhook" \
+    || red   "  FAIL  SNS notification missing from webhook logs"
 else
   red   "  FAIL  S3 upload failed completely"
+  FAIL=$((FAIL+1))
+fi
+echo
+
+echo "== 13. EventBridge Webhook -> POST /scan-s3-event (clean file) =="
+echo "clean file" > clean-test.txt
+python3 -c "
+import boto3
+s3 = boto3.client('s3', endpoint_url='http://localhost:4566', region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test')
+s3.upload_file('clean-test.txt', 'clamrest-uploads', 'clean-test.txt')
+"
+
+# Send a fake EventBridge / S3 Notification payload
+EVENT_PAYLOAD='{
+  "Records": [
+    {
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "bucket": { "name": "clamrest-uploads" },
+        "object": { "key": "clean-test.txt" }
+      }
+    }
+  ]
+}'
+
+code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/scan-s3-event" \
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "$EVENT_PAYLOAD")
+check "POST /scan-s3-event -> 202 Accepted" 202 "$code"
+
+echo "  waiting for background EventBridge processing to finish..."
+sleep 4
+
+TAGS=$(python3 -c "
+import boto3
+s3 = boto3.client('s3', endpoint_url='http://localhost:4566', region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test')
+try:
+    tags = s3.get_object_tagging(Bucket='clamrest-uploads', Key='clean-test.txt')['TagSet']
+    print([t['Value'] for t in tags if t['Key'] == 'av-status'][0])
+except Exception:
+    print('ERROR')
+" 2>/dev/null)
+
+if [ "$TAGS" = "CLEAN" ]; then
+  green "  PASS  Clean S3 object was correctly processed and tagged as CLEAN via Webhook"
+  PASS=$((PASS+1))
+else
+  red   "  FAIL  S3 object was not tagged correctly via Webhook (got $TAGS)"
   FAIL=$((FAIL+1))
 fi
 
@@ -168,7 +226,7 @@ echo "Results: $PASS passed, $FAIL failed"
 echo "=============================="
 
 # Cleanup
-rm -f /tmp/clean.txt /tmp/big.bin /tmp/out.json eicar.com.txt
+rm -f /tmp/clean.txt /tmp/big.bin /tmp/out.json eicar.com.txt clean-test.txt
 
 if [ "$FAIL" -eq 0 ]; then
   exit 0
