@@ -20,10 +20,19 @@ RUN apk add --no-cache clamav clamav-libunrar \
     && mkdir -p /run/clamav \
     && chown clamav:clamav /run/clamav
 
-# Configure clamAV to run in foreground with port 3310
+# Configure clamAV to run in foreground with port 3310 and add Sanesecurity custom signatures
 RUN sed -i 's/^#Foreground .*$/Foreground true/g' /etc/clamav/clamd.conf \
     && sed -i 's/^#TCPSocket .*$/TCPSocket 3310/g' /etc/clamav/clamd.conf \
-    && sed -i 's/^#Foreground .*$/Foreground true/g' /etc/clamav/freshclam.conf
+    && sed -i 's/^#Foreground .*$/Foreground true/g' /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/malwarehash.hsb' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/foxhole_generic.cdb' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/foxhole_js.cdb' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/phish.ndb' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/scam.ndb' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/rogue.hdb' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/badmacro.ndb' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/sigwhitelist.ign2' >> /etc/clamav/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/sanesecurity.ftm' >> /etc/clamav/freshclam.conf
 
 RUN freshclam --quiet --no-dns
 
