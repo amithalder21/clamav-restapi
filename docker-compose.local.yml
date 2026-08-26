@@ -67,7 +67,7 @@ services:
       # --- Auth ---
 
       # --- Path-scan sandbox for /scanPath ---
-      - SCAN_BASE_DIR=/scan-data
+      - APP_LOCAL_SCAN_DIR=/scan-data
 
       # --- Dummy AWS / LocalStack wiring ---
       - COGNITO_JWKS_URL=http://cognito-local:9229/local_4qK8k8k8/.well-known/jwks.json
@@ -75,13 +75,13 @@ services:
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/clamrest-scan-queue
-      - SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:clamrest-scan-results
-      - SNS_PUBLISH_INFECTED_ONLY=false
-      - DELETE_INFECTED_FILES=true
-      - QUARANTINE_S3_BUCKET=clamrest-quarantine
-      - SQS_WEBHOOK_URL=http://webhook-receiver:8080/webhook
-      - ALLOW_PRIVATE_IPS=true
+      - AWS_AWS_SQS_QUEUE_URL=http://localstack:4566/000000000000/clamrest-scan-queue
+      - AWS_AWS_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:clamrest-scan-results
+      - AWS_SNS_ONLY_INFECTED=false
+      - AWS_S3_DELETE_INFECTED=true
+      - AWS_S3_QUARANTINE_BUCKET=clamrest-quarantine
+      - APP_WEBHOOK_URL=http://webhook-receiver:8080/webhook
+      - APP_APP_ALLOW_PRIVATE_IPS=true
       - REDIS_URL=redis://dragonfly:6379
 
     volumes:

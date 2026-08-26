@@ -176,7 +176,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		}
 		limitedBody := http.MaxBytesReader(nil, objResp.Body, maxFileSizeBytes+1024*1024)
 
-		c := clamd.NewClamd(opts["CLAMD_PORT"])
+		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(limitedBody, abort)
 		if err != nil {
@@ -258,8 +258,8 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 
 		// 4. Optionally quarantine or delete if infected
 		if scanStatus == "INFECTED" {
-			quarantineBucket := opts["QUARANTINE_S3_BUCKET"]
-			shouldDelete := opts["DELETE_INFECTED_FILES"] == "true"
+			quarantineBucket := opts["AWS_S3_QUARANTINE_BUCKET"]
+			shouldDelete := opts["AWS_S3_DELETE_INFECTED"] == "true"
 
 			if quarantineBucket != "" {
 				copySource := url.PathEscape(bucket + "/" + key)
@@ -300,9 +300,9 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		}
 
 		// 5. Optionally publish to SNS
-		if snsTopicARN, ok := opts["SNS_TOPIC_ARN"]; ok && snsTopicARN != "" {
+		if snsTopicARN, ok := opts["AWS_SNS_TOPIC_ARN"]; ok && snsTopicARN != "" {
 			publish := true
-			if opts["SNS_PUBLISH_INFECTED_ONLY"] == "true" && scanStatus != "INFECTED" {
+			if opts["AWS_SNS_ONLY_INFECTED"] == "true" && scanStatus != "INFECTED" {
 				publish = false
 			}
 			if publish {
@@ -328,7 +328,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		}
 
 		// 6. Send Webhook
-		webhookURL := getWebhookURL(objResp, opts["SQS_WEBHOOK_URL"])
+		webhookURL := getWebhookURL(objResp, opts["APP_WEBHOOK_URL"])
 		if webhookURL != "" && clamdResult != nil {
 			publishAsyncResult(webhookURL, clamdResult, scanID, "s3://"+bucket+"/"+key)
 		}

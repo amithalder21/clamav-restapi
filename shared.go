@@ -125,7 +125,7 @@ func (r *ErrorInterceptingReader) Read(p []byte) (int, error) {
 
 // isPrivateIP checks if an IP belongs to private, loopback, link-local or unspecified ranges
 func isPrivateIP(ip net.IP) bool {
-	if os.Getenv("ALLOW_PRIVATE_IPS") == "true" {
+	if os.Getenv("APP_ALLOW_PRIVATE_IPS") == "true" {
 		return false
 	}
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified()
