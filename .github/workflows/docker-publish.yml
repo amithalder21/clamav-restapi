@@ -1,6 +1,7 @@
 name: Build and Publish Docker Images
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -11,7 +12,8 @@ on:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on:
+  workflow_dispatch: ubuntu-latest
     environment: Docker
     permissions:
       contents: write
