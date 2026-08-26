@@ -66,26 +66,20 @@ services:
 
       # --- Auth ---
 
-      # --- Path-scan sandbox for /scanPath ---
-      - APP_LOCAL_SCAN_DIR=/scan-data
-
       # --- Dummy AWS / LocalStack wiring ---
       - COGNITO_JWKS_URL=http://cognito-local:9229/local_4qK8k8k8/.well-known/jwks.json
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      - AWS_AWS_SQS_QUEUE_URL=http://localstack:4566/000000000000/clamrest-scan-queue
-      - AWS_AWS_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:clamrest-scan-results
+      - AWS_SQS_QUEUE_URL=http://localstack:4566/000000000000/clamrest-scan-queue
+      - AWS_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:clamrest-scan-results
       - AWS_SNS_ONLY_INFECTED=false
       - AWS_S3_DELETE_INFECTED=true
       - AWS_S3_QUARANTINE_BUCKET=clamrest-quarantine
       - APP_WEBHOOK_URL=http://webhook-receiver:8080/webhook
-      - APP_APP_ALLOW_PRIVATE_IPS=true
+      - APP_ALLOW_PRIVATE_IPS=true
       - REDIS_URL=redis://dragonfly:6379
-
-    volumes:
-      - scan-data:/scan-data
 
   cognito-local:
     image: jagregory/cognito-local:latest
@@ -95,5 +89,3 @@ services:
     volumes:
       - ./.cognito:/app/.cognito
 
-volumes:
-  scan-data:

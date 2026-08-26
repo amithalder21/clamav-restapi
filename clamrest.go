@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -39,48 +38,6 @@ func home(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status": "OK", "message": "ClamAV REST API is ready and ClamAV daemon is responsive"}`))
-}
-
-func scanPathHandler(w http.ResponseWriter, r *http.Request) {
-	paths, ok := r.URL.Query()["path"]
-	if !ok || len(paths[0]) < 1 {
-		writeJSONError(w, "Url Param 'path' is missing", http.StatusBadRequest)
-		return
-	}
-
-	requestedPath := paths[0]
-
-	baseDir := opts["APP_LOCAL_SCAN_DIR"]
-	if baseDir == "" {
-		baseDir = "/tmp" // Secure default
-	}
-
-	cleanBase := filepath.Clean(baseDir)
-	targetPath := filepath.Clean(requestedPath)
-
-	if !filepath.IsAbs(targetPath) {
-		targetPath = filepath.Join(cleanBase, targetPath)
-	}
-
-	if !strings.HasPrefix(targetPath, cleanBase+string(filepath.Separator)) && targetPath != cleanBase {
-		slog.Warn("Path traversal attempt blocked", slog.String("path", requestedPath))
-		writeJSONError(w, "Access denied: path is outside allowed directory", http.StatusForbidden)
-		return
-	}
-
-	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-	response, err := c.AllMatchScanFile(targetPath)
-
-	if err != nil {
-		slog.Error("ClamAV scan failed", slog.Any("error", err))
-		writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
-		return
-	}
-
-	for responseItem := range response {
-		writeScanResponse(w, responseItem, requestedPath)
-		return // Return immediately after the first result to guarantee valid JSON
-	}
 }
 
 //This is where the action happens.
@@ -214,7 +171,7 @@ func main() {
 		}
 	}
 
-	if sqsQueueURL, ok := opts["AWS_AWS_SQS_QUEUE_URL"]; ok && sqsQueueURL != "" {
+	if sqsQueueURL, ok := opts["AWS_SQS_QUEUE_URL"]; ok && sqsQueueURL != "" {
 		go startSQSConsumer(sqsQueueURL)
 	}
 	
@@ -223,7 +180,6 @@ func main() {
 	slog.Info("Connected to clamd", slog.String("port", opts["APP_CLAMD_ENDPOINT"]))
 
 	http.HandleFunc("/api/v1/scan/file", AuthMiddleware(scanHandler))
-	http.HandleFunc("/api/v1/scan/local-path", AuthMiddleware(scanPathHandler))
 	http.HandleFunc("/api/v1/scan/url", AuthMiddleware(scanURLHandler))
 	http.HandleFunc("/api/v1/async-scan/file", AuthMiddleware(scanAsyncHandler))
 	http.HandleFunc("/api/v1/async-scan/url", AuthMiddleware(scanURLAsyncHandler))
