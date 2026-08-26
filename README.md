@@ -25,7 +25,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files, strict HTTP body size limits (`MaxBytesReader`) to prevent memory/disk exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
 - **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks.
 - **Cloud URL Scanning**: Stream files directly from remote URLs to ClamAV without buffering in memory.
-- **API Key Authentication**: Optional security layer to restrict access.
+- **JWT Authentication**: Secure the API using AWS Cognito (or any OIDC provider) by validating Bearer tokens against a remote JWKS.
 - **Admin API**: Secured endpoints to check daemon health, Go runtime metrics, and manually reload the virus database.
 
 ---
@@ -115,8 +115,8 @@ Below is the complete list of available environment variables that can be used t
 
 | Parameter | Description |
 |-----------|-------------|
-| `API_KEY` | Secures the REST API with a required API key. |
-| `ADMIN_API_KEY` | Enables and secures the `/admin/*` REST endpoints. |
+| `COGNITO_JWKS_URL` | The URL to your Cognito User Pool's JWKS endpoint (e.g. `https://cognito-idp.us-east-1.amazonaws.com/USER_POOL_ID/.well-known/jwks.json`). If not set, authentication is disabled. |
+| `COGNITO_ISSUER` | (Optional) The expected `iss` claim to validate in the JWT (e.g. `https://cognito-idp.us-east-1.amazonaws.com/USER_POOL_ID`). |
 | `SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
 | `SQS_WEBHOOK_URL` | Fallback webhook URL to hit after an S3 object is scanned and tagged. |
 | `DELETE_INFECTED_FILES` | If `true`, the scanner will actively delete infected files from S3. |
@@ -161,8 +161,8 @@ Run the `clamav-restapi` docker image locally passing any configuration variable
 ```bash
 docker run -d \
   -p 9000:9000 \
-  -e API_KEY="my-secret-key" \
-  -e ADMIN_API_KEY="my-admin-key" \
+  -e COGNITO_JWKS_URL="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_12345/.well-known/jwks.json" \
+  -e COGNITO_ISSUER="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_12345" \
   -e SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/123/my-queue" \
   -e SQS_WEBHOOK_URL="https://webhook.site/your-id" \
   -e DELETE_INFECTED_FILES="false" \
@@ -202,7 +202,7 @@ docker run -d \
 Uploads a file directly to the API, blocks until the scan is complete, and returns the result.
 
 ```bash
-$ curl -i -F "file=@eicar.com.txt" -H "X-API-Key: my-secret-key" http://localhost:9000/api/v1/scan/file
+$ curl -i -F "file=@eicar.com.txt" -H "Authorization: Bearer $JWT_TOKEN" http://localhost:9000/api/v1/scan/file
 
 HTTP/1.1 406 Not Acceptable
 { "filename": "eicar.com.txt", "av-status": "INFECTED", "av-signature": "Eicar-Test-Signature", "av-timestamp": "2026/08/25 02:00:11 UTC" }
@@ -362,12 +362,12 @@ To completely prevent internal users or APIs from downloading infected files, at
 
 To allow cluster administrators to manage the running ClamAV daemon, we provide a set of administrative endpoints. 
 
-> **Important Security Note:** The Admin API is **disabled by default**. To enable it, you must start the container with the `ADMIN_API_KEY` environment variable. This key must then be provided via the `X-API-Key` header for all `/admin/*` endpoints.
+> **Important Security Note:** The Admin API is **disabled by default**. To enable it, you must configure `COGNITO_JWKS_URL`. Administrative users must have the `admin` scope or belong to the `admin` Cognito group in their JWT to access the `/admin/*` endpoints.
 
 ### 1. Get Daemon Status
 Returns comprehensive health data including the ClamAV engine version, signature database info, Go runtime metrics, and the active configuration limits.
 ```bash
-$ curl -H "X-API-Key: your-admin-key" http://localhost:9000/api/v1/admin/status
+$ curl -H "Authorization: Bearer $JWT_TOKEN" http://localhost:9000/api/v1/admin/status
 
 HTTP/1.1 200 OK
 {
@@ -382,7 +382,7 @@ HTTP/1.1 200 OK
 ### 2. Reload Virus Database
 Forces the ClamAV daemon to reload its virus database from disk into memory without restarting the container.
 ```bash
-$ curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/api/v1/admin/reload
+$ curl -X POST -H "Authorization: Bearer $JWT_TOKEN" http://localhost:9000/api/v1/admin/reload
 
 HTTP/1.1 200 OK
 {"message": "Reload command sent to ClamAV successfully."}
@@ -391,7 +391,7 @@ HTTP/1.1 200 OK
 ### 3. Update Signatures
 Forces `freshclam` to execute immediately in the background, downloading the absolute latest virus definitions from the internet.
 ```bash
-$ curl -X POST -H "X-API-Key: your-admin-key" http://localhost:9000/api/v1/admin/update-signatures
+$ curl -X POST -H "Authorization: Bearer $JWT_TOKEN" http://localhost:9000/api/v1/admin/update-signatures
 
 HTTP/1.1 202 Accepted
 {"message": "Signature update (freshclam) started in the background."}
@@ -403,15 +403,15 @@ HTTP/1.1 202 Accepted
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/api/v1/scan/file` | Scans a file uploaded via `multipart/form-data` (`file` field). | `API_KEY` (if set) |
-| `GET`  | `/api/v1/scan/local-path` | Scans a local file already residing on the container's disk (`?path=/tmp/file`). | `API_KEY` (if set) |
-| `POST` | `/api/v1/scan/url` | Scans a file by streaming it from a remote URL. Payload: `{"url":"..."}`. | `API_KEY` (if set) |
-| `POST` | `/api/v1/async-scan/file` | Asynchronously scans an uploaded file. Requires `file` and `webhook_url` form fields. | `API_KEY` (if set) |
-| `POST` | `/api/v1/async-scan/url` | Asynchronously scans a URL. Payload: `{"url":"...", "webhook_url":"..."}`. | `API_KEY` (if set) |
-| `POST` | `/api/v1/events/s3` | Takes an AWS S3 `ObjectCreated` JSON payload, streams file from S3, and tags it. | `API_KEY` (if set) |
-| `GET`  | `/api/v1/admin/status` | Returns ClamAV engine version and internal memory stats. | `ADMIN_API_KEY` |
-| `POST` | `/api/v1/admin/reload` | Forces ClamAV to hot-reload virus databases from disk to memory. | `ADMIN_API_KEY` |
-| `POST` | `/api/v1/admin/update-signatures` | Forces `freshclam` to update virus signatures immediately in the background. | `ADMIN_API_KEY` |
+| `POST` | `/api/v1/scan/file` | Scans a file uploaded via `multipart/form-data` (`file` field). | `COGNITO_JWKS_URL` |
+| `GET`  | `/api/v1/scan/local-path` | Scans a local file already residing on the container's disk (`?path=/tmp/file`). | `COGNITO_JWKS_URL` |
+| `POST` | `/api/v1/scan/url` | Scans a file by streaming it from a remote URL. Payload: `{"url":"..."}`. | `COGNITO_JWKS_URL` |
+| `POST` | `/api/v1/async-scan/file` | Asynchronously scans an uploaded file. Requires `file` and `webhook_url` form fields. | `COGNITO_JWKS_URL` |
+| `POST` | `/api/v1/async-scan/url` | Asynchronously scans a URL. Payload: `{"url":"...", "webhook_url":"..."}`. | `COGNITO_JWKS_URL` |
+| `POST` | `/api/v1/events/s3` | Takes an AWS S3 `ObjectCreated` JSON payload, streams file from S3, and tags it. | `COGNITO_JWKS_URL` |
+| `GET`  | `/api/v1/admin/status` | Returns ClamAV engine version and internal memory stats. | `admin` JWT scope |
+| `POST` | `/api/v1/admin/reload` | Forces ClamAV to hot-reload virus databases from disk to memory. | `admin` JWT scope |
+| `POST` | `/api/v1/admin/update-signatures` | Forces `freshclam` to update virus signatures immediately in the background. | `admin` JWT scope |
 
 The API strictly adheres to the following HTTP status codes for all scan endpoints and webhook payloads:
 - `200` - Clean file (no known infections)

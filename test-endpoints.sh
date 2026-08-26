@@ -8,8 +8,12 @@
 set -uo pipefail
 
 HOST="http://localhost:9000"
-API_KEY="local-test-api-key"
-ADMIN_KEY="local-test-admin-key"
+
+echo "Fetching JWT token from cognito-local..."
+chmod +x ./get_test_token.sh
+TOKEN_OUTPUT=$(./get_test_token.sh)
+JWT_TOKEN=$(echo "$TOKEN_OUTPUT" | cut -d'|' -f1)
+
 PASS=0
 FAIL=0
 
@@ -51,7 +55,7 @@ echo
 echo "== 3. /api/v1/scan/file — clean file =="
 echo "this is a clean test file" > /tmp/clean.txt
 code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/scan/file" \
-  -H "X-API-Key: $API_KEY" -F "file=@/tmp/clean.txt")
+  -H "Authorization: Bearer $JWT_TOKEN" -F "file=@/tmp/clean.txt")
 check "POST /api/v1/scan/file clean file -> 200" 200 "$code"
 grep -q '"av-status":"CLEAN"' /tmp/out.json && green "  clean file correctly marked CLEAN"
 echo
@@ -59,7 +63,7 @@ echo
 echo "== 4. /api/v1/scan/file — EICAR test virus (expect INFECTED) =="
 echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > eicar.com.txt
 code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/scan/file" \
-  -H "X-API-Key: $API_KEY" -F "file=@eicar.com.txt")
+  -H "Authorization: Bearer $JWT_TOKEN" -F "file=@eicar.com.txt")
 check "POST /api/v1/scan/file EICAR -> 406 (Not Acceptable / INFECTED)" 406 "$code"
 grep -q '"av-status":"INFECTED"' /tmp/out.json && green "  EICAR correctly flagged INFECTED"
 echo
@@ -68,34 +72,34 @@ echo "== 5. /api/v1/scan/file — oversized upload is rejected (413) =="
 # MAX_FILE_SIZE=100M in this stack; generate a 101MB file to trip the cap
 dd if=/dev/zero of=/tmp/big.bin bs=1M count=101 2>/dev/null
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/api/v1/scan/file" \
-  -H "X-API-Key: $API_KEY" -F "file=@/tmp/big.bin")
+  -H "Authorization: Bearer $JWT_TOKEN" -F "file=@/tmp/big.bin")
 check "POST /api/v1/scan/file 101MB file -> 413" 413 "$code"
 rm -f /tmp/big.bin
 echo
 
 echo "== 6. /api/v1/scan/local-path — path traversal is blocked =="
 code=$(curl -s -o /dev/null -w "%{http_code}" -G "$HOST/api/v1/scan/local-path" \
-  -H "X-API-Key: $API_KEY" --data-urlencode "path=../../etc/passwd")
+  -H "Authorization: Bearer $JWT_TOKEN" --data-urlencode "path=../../etc/passwd")
 check "GET /api/v1/scan/local-path?path=../../etc/passwd -> 403" 403 "$code"
 echo
 
 echo "== 7. /api/v1/scan/url — SSRF to internal/link-local address is blocked =="
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/api/v1/scan/url" \
-  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $JWT_TOKEN" -H "Content-Type: application/json" \
   -d '{"url":"http://169.254.169.254/latest/meta-data/"}')
 check "POST /api/v1/scan/url to 169.254.169.254 -> 400 (blocked)" 400 "$code"
 echo
 
 echo "== 8. /api/v1/scan/url — legitimate external URL scans clean =="
 code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/scan/url" \
-  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $JWT_TOKEN" -H "Content-Type: application/json" \
   -d '{"url":"https://raw.githubusercontent.com/octocat/Hello-World/master/README"}')
 check "POST /api/v1/scan/url external file -> 200" 200 "$code"
 echo
 
 echo "== 9. /api/v1/async-scan/file — upload triggers async scan + webhook =="
 code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/async-scan/file" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
   -F "file=@eicar.com.txt" \
   -F "webhook_url=http://webhook-receiver:8080/webhook")
 check "POST /api/v1/async-scan/file -> 202 Accepted" 202 "$code"
@@ -109,22 +113,22 @@ echo
 
 echo "== 10. /api/v1/async-scan/url — same, via URL fetch =="
 code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/async-scan/url" \
-  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $JWT_TOKEN" -H "Content-Type: application/json" \
   -d '{"url":"https://raw.githubusercontent.com/octocat/Hello-World/master/README","webhook_url":"http://webhook-receiver:8080/webhook"}')
 check "POST /api/v1/async-scan/url -> 202 Accepted" 202 "$code"
 echo
 
 echo "== 11. /admin/* — wrong admin key rejected, right key works =="
-code=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/api/v1/admin/status" -H "X-API-Key: wrong-key")
+code=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/api/v1/admin/status" -H "Authorization: Bearer wrong-token")
 check "GET /api/v1/admin/status wrong key -> 403" 403 "$code"
 
-code=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/api/v1/admin/status" -H "X-API-Key: $ADMIN_KEY")
+code=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/api/v1/admin/status" -H "Authorization: Bearer $JWT_TOKEN")
 check "GET /api/v1/admin/status correct key -> 200" 200 "$code"
 
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/api/v1/admin/update-signatures" -H "X-API-Key: $ADMIN_KEY")
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/api/v1/admin/update-signatures" -H "Authorization: Bearer $JWT_TOKEN")
 check "POST /api/v1/admin/update-signatures -> 202 Accepted" 202 "$code"
 
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/api/v1/admin/reload" -H "X-API-Key: $ADMIN_KEY")
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/api/v1/admin/reload" -H "Authorization: Bearer $JWT_TOKEN")
 check "POST /api/v1/admin/reload -> 200 OK" 200 "$code"
 echo
 
@@ -216,7 +220,7 @@ EVENT_PAYLOAD='{
 }'
 
 code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/events/s3" \
-  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d "$EVENT_PAYLOAD")
+  -H "Authorization: Bearer $JWT_TOKEN" -H "Content-Type: application/json" -d "$EVENT_PAYLOAD")
 check "POST /api/v1/events/s3 -> 202 Accepted" 202 "$code"
 
 echo "  waiting for background EventBridge processing to finish..."

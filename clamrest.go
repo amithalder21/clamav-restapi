@@ -200,7 +200,9 @@ func main() {
 		opts["CLAMD_PORT"] = "tcp://localhost:3310"
 	}
 
-	slog.Info("Starting clamav-restapi", slog.String("port", PORT), slog.String("clamd_port", opts["CLAMD_PORT"]))
+	slog.Info("Starting ClamAV REST API")
+
+	InitJWKS()
 
 	if redisURL := opts["REDIS_URL"]; redisURL != "" {
 		opt, err := redis.ParseURL(redisURL)
