@@ -21,6 +21,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 
 - **Event-Driven AWS Architecture**: Natively integrates with AWS S3, SQS, and EventBridge to perform Zero-HTTP polling, native S3 streaming, and S3 Object Auto-Tagging (`av-status`, `av-signature`).
 - **Advanced S3 Security**: Automatically streams files from S3 without saving to disk, non-destructively merges existing tags with virus results, actively deletes infected files, and alerts security teams via AWS SNS.
+- **Advanced Malware & PDF Detection**: Pre-configured with third-party Sanesecurity signatures natively baked into the Docker image. Curated to aggressively block malicious macros, phishing payloads, and zero-day JavaScript embedded within PDFs—closing the gaps in standard ClamAV databases.
 - **Enterprise Audit Logging**: Full support for native structured JSON logs (`log/slog`), directly indexing `scan_id`, `duration_ms`, `result`, and `client_id` instantly into CloudWatch for security dashboards.
 - **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files, strict HTTP body size limits (`MaxBytesReader`) to prevent memory/disk exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
 - **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks.
