@@ -79,8 +79,11 @@ sequenceDiagram
         ClamAV->>S3: Streams S3 Object (s3:GetObject)
         ClamAV->>ClamAV: Analyzes File
         ClamAV->>S3: Merges & Applies Tags (s3:PutObjectTagging)
-        opt If INFECTED & DELETE_INFECTED_FILES=true
-            ClamAV->>S3: Deletes File (s3:DeleteObject)
+        opt If INFECTED & QUARANTINE_S3_BUCKET is set
+            ClamAV->>QuarantineS3: CopyObject (moves file & tags to quarantine)
+            ClamAV->>S3: DeleteObject (removes original file)
+        else If INFECTED & DELETE_INFECTED_FILES=true
+            ClamAV->>S3: DeleteObject (removes infected file)
         end
         opt If SNS_TOPIC_ARN is set
             ClamAV->>SNS: Publishes JSON Scan Alert
@@ -108,6 +111,7 @@ Below is the complete list of available environment variables that can be used t
 | `SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
 | `SQS_WEBHOOK_URL` | Fallback webhook URL to hit after an S3 object is scanned and tagged. |
 | `DELETE_INFECTED_FILES` | If `true`, the scanner will actively delete infected files from S3. |
+| `QUARANTINE_S3_BUCKET`| If set to a bucket name, infected files will be copied here and deleted from the source bucket. |
 | `SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
 | `SNS_PUBLISH_INFECTED_ONLY` | If `true`, the scanner will only publish to SNS if a file is infected. |
 | `AWS_REGION` | The AWS Region your queue and bucket reside in (e.g. `us-east-1`). |
@@ -153,6 +157,7 @@ docker run -d \
   -e SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/123/my-queue" \
   -e SQS_WEBHOOK_URL="https://webhook.site/your-id" \
   -e DELETE_INFECTED_FILES="false" \
+  -e QUARANTINE_S3_BUCKET="my-quarantine-bucket" \
   -e SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123:my-topic" \
   -e SNS_PUBLISH_INFECTED_ONLY="true" \
   -e AWS_REGION="us-east-1" \
@@ -260,7 +265,8 @@ HTTP/1.1 202 Accepted
 Regardless of which method you use, the integration handles the following natively:
 - **Non-Destructive S3 Auto-Tagging**: After ClamAV finishes its scan, the API calls `s3.GetObjectTagging` to retrieve your existing tags, safely appends `av-status=CLEAN` (or `INFECTED`), `av-signature`, and `av-timestamp`, and then updates the file. Your custom tags are perfectly preserved!
 - **SNS Security Alerts**: If you provide the `SNS_TOPIC_ARN` variable, the container will instantly push a JSON event containing the scan results directly to an AWS SNS Topic. By turning on `SNS_PUBLISH_INFECTED_ONLY=true`, your team will *only* be alerted when actual malware is found.
-- **Auto-Deletion**: For the ultimate security posture, if you set `DELETE_INFECTED_FILES=true`, the container will automatically call `s3.DeleteObject` the very millisecond a virus is detected. It eliminates the threat immediately before anyone can download it.
+- **Malware Quarantine**: If you define `QUARANTINE_S3_BUCKET`, any discovered malware is immediately copied to a safe, isolated quarantine bucket (preserving the `av-status=INFECTED` tag) and then securely deleted from the source upload bucket. This allows your security team to safely inspect the malware payload without exposing your users.
+- **Auto-Deletion**: Alternatively, if you set `DELETE_INFECTED_FILES=true` without a quarantine bucket, the container will simply `s3.DeleteObject` the very millisecond a virus is detected.
 - **Webhook Routing**: To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `SQS_WEBHOOK_URL` environment variable.
 
 ### AWS IAM & Security Setup
@@ -305,7 +311,10 @@ Your ClamAV container running in ECS Fargate needs this **IAM Task Role** to rea
         "s3:PutObjectVersionTagging", 
         "s3:DeleteObject"
       ],
-      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+      "Resource": [
+        "arn:aws:s3:::YOUR_UPLOAD_BUCKET/*",
+        "arn:aws:s3:::YOUR_QUARANTINE_BUCKET/*"
+      ]
     },
     {
       "Effect": "Allow",

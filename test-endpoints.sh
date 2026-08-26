@@ -143,7 +143,7 @@ if [ $? -eq 0 ]; then
   echo "  uploaded eicar-test.txt to S3, waiting for SQS consumer to pick it up..."
   sleep 4
   
-  # Check if S3 object was deleted (because DELETE_INFECTED_FILES=true)
+  # Check if S3 object was deleted from source bucket
   STATUS=$(python3 -c "
 import boto3, botocore
 s3 = boto3.client('s3', endpoint_url='http://localhost:4566', region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test')
@@ -158,10 +158,29 @@ except botocore.exceptions.ClientError as e:
 " 2>/dev/null)
 
   if [ "$STATUS" = "DELETED" ]; then
-    green "  PASS  Infected S3 object was successfully auto-deleted"
+    green "  PASS  Infected S3 object was successfully auto-deleted from source bucket"
     PASS=$((PASS+1))
   else
-    red   "  FAIL  S3 object was NOT deleted (got $STATUS)"
+    red   "  FAIL  S3 object was NOT deleted from source bucket (got $STATUS)"
+    FAIL=$((FAIL+1))
+  fi
+  
+  # Check if S3 object exists in quarantine bucket and has INFECTED tag
+  QTAGS=$(python3 -c "
+import boto3
+s3 = boto3.client('s3', endpoint_url='http://localhost:4566', region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test')
+try:
+    tags = s3.get_object_tagging(Bucket='clamrest-quarantine', Key='eicar-test.txt')['TagSet']
+    print([t['Value'] for t in tags if t['Key'] == 'av-status'][0])
+except Exception as e:
+    print('ERROR')
+" 2>/dev/null)
+
+  if [ "$QTAGS" = "INFECTED" ]; then
+    green "  PASS  Infected S3 object was successfully quarantined with INFECTED tag preserved"
+    PASS=$((PASS+1))
+  else
+    red   "  FAIL  S3 object was not correctly quarantined (got $QTAGS)"
     FAIL=$((FAIL+1))
   fi
 
