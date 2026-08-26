@@ -29,6 +29,17 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **JWT Authentication**: Secure the API using AWS Cognito (or any OIDC provider) by validating Bearer tokens against a remote JWKS.
 - **Admin API**: Secured endpoints to check daemon health, Go runtime metrics, and manually reload the virus database.
 
+### Embedded Third-Party Signatures (Sanesecurity)
+
+To close the gap against modern PDF delivery vectors, the Docker image is natively pre-configured to download and enforce the following [Sanesecurity](https://sanesecurity.com/) third-party definitions:
+
+- **`malwarehash.hsb` & `foxhole_generic.cdb`**: Malicious file hashes and generic malware detection (channel-agnostic).
+- **`foxhole_js.cdb`**: Embedded JavaScript detection (the primary payload mechanism in malicious PDFs).
+- **`phish.ndb` & `scam.ndb`**: Phishing and scam content detection.
+- **`rogue.hdb`**: Rogue software hashes.
+- **`badmacro.ndb`**: Malicious macro detection (safety net for non-PDF documents).
+- **`sigwhitelist.ign2` & `sanesecurity.ftm`**: Mandatory false-positive suppression rules paired with the above databases.
+
 ---
 
 ## System Architecture
