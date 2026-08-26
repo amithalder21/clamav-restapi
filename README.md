@@ -55,7 +55,7 @@ sequenceDiagram
     %% 1. Synchronous Scan
     rect rgb(240, 248, 255)
         Note over Client, ClamAV: 1. Synchronous Local/File Scan
-        Client->>ClamAV: POST /api/v1/scan/file (Multipart File) or GET /api/v1/scan/local-path
+        Client->>ClamAV: POST /api/v1/scan/file (Multipart File)
         ClamAV->>ClamAV: Analyzes File
         ClamAV-->>Client: HTTP 200 OK (JSON Result)
     end
@@ -138,7 +138,6 @@ Below is the complete list of available environment variables that can be used t
 | `AWS_SESSION_TOKEN` | Your AWS Session Token. Not required if using standard IAM User or Task Role. |
 | `APP_ALLOW_PRIVATE_IPS` | If `true`, disables SSRF protection and allows webhooks/URLs to hit private subnets (e.g., `10.x`, `172.x`). Use only for isolated testing! |
 | `APP_CLAMD_ENDPOINT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
-| `APP_LOCAL_SCAN_DIR` | Secures `/api/v1/scan/local-path` by strictly restricting path traversal outside this mount directory. Default `/tmp`. |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `200M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `100M` |
 | `MAX_RECURSION` | How many nested archives to scan - Default `32` |
@@ -294,15 +293,7 @@ curl -i -X POST -H "Content-Type: application/json" \
 HTTP/1.1 202 Accepted
 {"scan_id":"uuid-string","message":"Scan started asynchronously","filename":"https://secure.eicar.org/eicar.com.txt"}
 ```
-### 5. Scan a Local File (Container Disk)
-If you have mounted a volume into the container, you can instruct ClamAV to scan a file already residing locally on the container's disk.
 
-```bash
-curl -i "http://localhost:9000/api/v1/scan/local-path?path=/tmp/suspicious_file.txt"
-
-HTTP/1.1 200 OK
-{ "filename": "/tmp/suspicious_file.txt", "av-status": "CLEAN", "av-signature": "CLEAN", "av-timestamp": "2026/08/25 02:00:11 UTC" }
-```
 
 ---
 
@@ -457,7 +448,7 @@ HTTP/1.1 202 Accepted
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
 | `POST` | `/api/v1/scan/file` | Scans a file uploaded via `multipart/form-data` (`file` field). | `COGNITO_JWKS_URL` |
-| `GET`  | `/api/v1/scan/local-path` | Scans a local file already residing on the container's disk (`?path=/tmp/file`). | `COGNITO_JWKS_URL` |
+
 | `POST` | `/api/v1/scan/url` | Scans a file by streaming it from a remote URL. Payload: `{"url":"..."}`. | `COGNITO_JWKS_URL` |
 | `POST` | `/api/v1/async-scan/file` | Asynchronously scans an uploaded file. Requires `file` and `webhook_url` form fields. | `COGNITO_JWKS_URL` |
 | `POST` | `/api/v1/async-scan/url` | Asynchronously scans a URL. Payload: `{"url":"...", "webhook_url":"..."}`. | `COGNITO_JWKS_URL` |
@@ -524,7 +515,7 @@ docker compose -f docker-compose.local.yml down -v
 | 3 | `POST /api/v1/scan/file` | clean file → CLEAN |
 | 4 | `POST /api/v1/scan/file` | EICAR test string → INFECTED (406) |
 | 5 | `POST /api/v1/scan/file` | 101MB upload rejected (413) — the DoS fix |
-| 6 | `GET /api/v1/scan/local-path` | `../../etc/passwd` blocked (403) — path traversal fix |
+
 | 7 | `POST /api/v1/scan/url` | `169.254.169.254` (cloud metadata) blocked (400) — SSRF fix |
 | 8 | `POST /api/v1/scan/url` | legitimate external URL scans successfully |
 | 9 | `POST /api/v1/async-scan/file` | EICAR upload → 202, webhook receives INFECTED result |

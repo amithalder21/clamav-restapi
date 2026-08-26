@@ -96,11 +96,6 @@ check "POST /api/v1/scan/file 101MB file -> 413" 413 "$code"
 rm -f /tmp/big.bin
 echo
 
-echo "== 6. /api/v1/scan/local-path — path traversal is blocked =="
-code=$(curl -s -o /dev/null -w "%{http_code}" -G "$HOST/api/v1/scan/local-path" \
-  -H "Authorization: Bearer $JWT_TOKEN" --data-urlencode "path=../../etc/passwd")
-check "GET /api/v1/scan/local-path?path=../../etc/passwd -> 403" 403 "$code"
-echo
 
 echo "== 7. /api/v1/scan/url — SSRF to internal/link-local address is blocked =="
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOST/api/v1/scan/url" \
