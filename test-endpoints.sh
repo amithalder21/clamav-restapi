@@ -10,9 +10,28 @@ set -uo pipefail
 HOST="http://localhost:9000"
 
 echo "Fetching JWT token from cognito-local..."
-chmod +x ./get_test_token.sh
-TOKEN_OUTPUT=$(./get_test_token.sh)
-JWT_TOKEN=$(echo "$TOKEN_OUTPUT" | cut -d'|' -f1)
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+ENDPOINT="http://localhost:9229"
+REGION="us-east-1"
+
+# Provision Cognito pool and client
+POOL_ID=$(aws --endpoint-url=$ENDPOINT cognito-idp create-user-pool --pool-name test-pool --region $REGION --query 'UserPool.Id' --output text)
+CLIENT_ID=$(aws --endpoint-url=$ENDPOINT cognito-idp create-user-pool-client --user-pool-id $POOL_ID --client-name test-client --region $REGION --query 'UserPoolClient.ClientId' --output text)
+
+# Provision admin user and group
+aws --endpoint-url=$ENDPOINT cognito-idp admin-create-user --user-pool-id $POOL_ID --username "admin@test.com" --message-action SUPPRESS --region $REGION >/dev/null 2>&1 || true
+aws --endpoint-url=$ENDPOINT cognito-idp admin-set-user-password --user-pool-id $POOL_ID --username "admin@test.com" --password "Password1!" --permanent --region $REGION >/dev/null
+aws --endpoint-url=$ENDPOINT cognito-idp create-group --user-pool-id $POOL_ID --group-name "admin" --region $REGION >/dev/null 2>&1 || true
+aws --endpoint-url=$ENDPOINT cognito-idp admin-add-user-to-group --user-pool-id $POOL_ID --username "admin@test.com" --group-name "admin" --region $REGION >/dev/null
+
+# Authenticate to get IdToken
+JWT_TOKEN=$(aws --endpoint-url=$ENDPOINT cognito-idp initiate-auth \
+  --client-id $CLIENT_ID \
+  --auth-flow USER_PASSWORD_AUTH \
+  --auth-parameters USERNAME="admin@test.com",PASSWORD="Password1!" \
+  --region $REGION \
+  --query 'AuthenticationResult.IdToken' --output text)
 
 PASS=0
 FAIL=0
