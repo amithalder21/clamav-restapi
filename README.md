@@ -69,7 +69,7 @@ sequenceDiagram
         ClamAV->>S3: Streams S3 Object (s3:GetObject)
         ClamAV->>ClamAV: Analyzes File
         ClamAV->>S3: Merges & Applies Tags (s3:PutObjectTagging)
-        opt If INFECTED & QUARANTINE_S3_BUCKET is set
+        alt If INFECTED & QUARANTINE_S3_BUCKET is set
             ClamAV->>QuarantineS3: CopyObject (moves file & tags to quarantine)
             ClamAV->>S3: DeleteObject (removes original file)
         else If INFECTED & DELETE_INFECTED_FILES=true
@@ -88,7 +88,7 @@ sequenceDiagram
         ClamAV->>S3: Streams S3 Object (s3:GetObject)
         ClamAV->>ClamAV: Analyzes File
         ClamAV->>S3: Merges & Applies Tags (s3:PutObjectTagging)
-        opt If INFECTED & QUARANTINE_S3_BUCKET is set
+        alt If INFECTED & QUARANTINE_S3_BUCKET is set
             ClamAV->>QuarantineS3: CopyObject (moves file & tags to quarantine)
             ClamAV->>S3: DeleteObject (removes original file)
         else If INFECTED & DELETE_INFECTED_FILES=true
