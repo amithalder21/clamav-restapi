@@ -102,6 +102,43 @@ check "POST /api/v1/scan/file Sanesecurity Payload -> 406" 406 "$code"
 grep -q '"av-status":"INFECTED"' /tmp/out.json && green "  Sanesecurity payload correctly flagged INFECTED"
 echo
 
+echo "== 4c. /api/v1/scan/file — Malicious PDF (expect INFECTED) =="
+cat << 'EOF' > eicar.pdf
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 68 >>
+stream
+X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000214 00000 n 
+trailer
+<< /Size 5 /Root 1 0 R >>
+startxref
+333
+%%EOF
+EOF
+code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/scan/file" \
+  -H "Authorization: Bearer $JWT_TOKEN" -F "file=@eicar.pdf")
+check "POST /api/v1/scan/file PDF Payload -> 406" 406 "$code"
+grep -q '"av-status":"INFECTED"' /tmp/out.json && green "  PDF payload correctly flagged INFECTED"
+echo
+
 echo "== 5. /api/v1/scan/file — oversized upload is rejected (413) =="
 # MAX_FILE_SIZE=100M in this stack; generate a 101MB file to trip the cap
 dd if=/dev/zero of=/tmp/big.bin bs=1M count=101 2>/dev/null
