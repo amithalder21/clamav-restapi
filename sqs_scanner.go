@@ -256,20 +256,46 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			slog.Info("Successfully tagged S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.String("result", scanStatus))
 		}
 
-		// 4. Optionally delete if infected
-		if scanStatus == "INFECTED" && opts["DELETE_INFECTED_FILES"] == "true" {
-			delReq := &s3.DeleteObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(key),
+		// 4. Optionally quarantine or delete if infected
+		if scanStatus == "INFECTED" {
+			quarantineBucket := opts["QUARANTINE_S3_BUCKET"]
+			shouldDelete := opts["DELETE_INFECTED_FILES"] == "true"
+
+			if quarantineBucket != "" {
+				copySource := url.PathEscape(bucket + "/" + key)
+				if versionId != "" {
+					copySource += "?versionId=" + versionId
+				}
+
+				copyReq := &s3.CopyObjectInput{
+					Bucket:     aws.String(quarantineBucket),
+					CopySource: aws.String(copySource),
+					Key:        aws.String(key),
+				}
+				_, err := s3Client.CopyObject(context.TODO(), copyReq)
+				if err != nil {
+					slog.Error("Failed to copy infected S3 object to quarantine bucket", slog.String("scan_id", scanID), slog.String("source_bucket", bucket), slog.String("quarantine_bucket", quarantineBucket), slog.String("key", key), slog.Any("error", err))
+				} else {
+					slog.Info("Quarantined infected S3 object", slog.String("scan_id", scanID), slog.String("source_bucket", bucket), slog.String("quarantine_bucket", quarantineBucket), slog.String("key", key))
+					// Automatically delete from original bucket if quarantine was successful
+					shouldDelete = true
+				}
 			}
-			if versionId != "" {
-				delReq.VersionId = aws.String(versionId)
-			}
-			_, err := s3Client.DeleteObject(context.TODO(), delReq)
-			if err != nil {
-				slog.Error("Failed to delete infected S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
-			} else {
-				slog.Info("Deleted infected S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key))
+
+			if shouldDelete {
+				delReq := &s3.DeleteObjectInput{
+					Bucket: aws.String(bucket),
+					Key:    aws.String(key),
+				}
+				if versionId != "" {
+					delReq.VersionId = aws.String(versionId)
+				}
+				_, err := s3Client.DeleteObject(context.TODO(), delReq)
+				if err != nil {
+					slog.Error("Failed to delete infected S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
+				} else {
+					slog.Info("Deleted infected S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key))
+				}
 			}
 		}
 

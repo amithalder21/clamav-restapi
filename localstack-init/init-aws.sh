@@ -17,6 +17,9 @@ TOPIC_NAME="clamrest-scan-results"
 echo "[init] Creating S3 bucket: $BUCKET"
 awslocal s3 mb "s3://$BUCKET"
 
+echo "[init] Creating S3 Quarantine bucket: clamrest-quarantine"
+awslocal s3 mb "s3://clamrest-quarantine"
+
 echo "[init] Creating SQS queue: $QUEUE_NAME"
 awslocal sqs create-queue --queue-name "$QUEUE_NAME"
 QUEUE_URL=$(awslocal sqs get-queue-url --queue-name "$QUEUE_NAME" --query 'QueueUrl' --output text)
