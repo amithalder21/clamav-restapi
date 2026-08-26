@@ -204,6 +204,37 @@ docker run -d \
 
 ---
 
+
+## Service-to-Service Integration Guide (Authentication)
+
+Because this API uses **Machine-to-Machine (M2M)** authentication, there are no users, passwords, or UI login screens. Connecting services (e.g., your backend microservices) must authenticate using the **OAuth 2.0 Client Credentials Grant**.
+
+### 1. Fetching a JWT from AWS Cognito
+Your calling service must use its `Client ID` and `Client Secret` to request an Access Token from the Cognito Token Endpoint:
+
+```bash
+curl -X POST https://YOUR_COGNITO_DOMAIN.auth.us-east-1.amazoncognito.com/oauth2/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -u "YOUR_CLIENT_ID:YOUR_CLIENT_SECRET" \
+  -d "grant_type=client_credentials"
+
+# Response:
+# {
+#   "access_token": "eyJraWQi...",
+#   "expires_in": 3600,
+#   "token_type": "Bearer"
+# }
+```
+
+### 2. Calling the ClamAV REST API
+Once your service has the `access_token`, inject it into the HTTP headers of all API requests using the standard `Authorization: Bearer <token>` format:
+
+```bash
+curl -i -H "Authorization: Bearer eyJraWQi..." http://clamav-restapi:9000/api/v1/scan/url
+```
+
+---
+
 ## Usage: Core API Endpoints
 
 ### 1. Synchronous File Scan
@@ -249,7 +280,21 @@ HTTP/1.1 202 Accepted
 ```
 ```
 
-### 4. Scan a Local File (Container Disk)
+
+
+### 4. Asynchronous URL Scanning
+Similar to file uploads, you can also pass a JSON payload with a URL to be scanned asynchronously.
+
+```bash
+curl -i -X POST -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -d '{"url":"https://secure.eicar.org/eicar.com.txt", "webhook_url":"https://your-domain.com/callback"}' \
+  http://localhost:9000/api/v1/async-scan/url
+
+HTTP/1.1 202 Accepted
+{"scan_id":"uuid-string","message":"Scan started asynchronously","filename":"https://secure.eicar.org/eicar.com.txt"}
+```
+### 5. Scan a Local File (Container Disk)
 If you have mounted a volume into the container, you can instruct ClamAV to scan a file already residing locally on the container's disk.
 
 ```bash
