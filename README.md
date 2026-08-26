@@ -68,7 +68,16 @@ sequenceDiagram
         ClamAV-->>EventBridge: HTTP 202 Accepted
         ClamAV->>S3: Streams S3 Object (s3:GetObject)
         ClamAV->>ClamAV: Analyzes File
-        ClamAV->>S3: Applies av-status Tags (s3:PutObjectTagging)
+        ClamAV->>S3: Merges & Applies Tags (s3:PutObjectTagging)
+        opt If INFECTED & QUARANTINE_S3_BUCKET is set
+            ClamAV->>QuarantineS3: CopyObject (moves file & tags to quarantine)
+            ClamAV->>S3: DeleteObject (removes original file)
+        else If INFECTED & DELETE_INFECTED_FILES=true
+            ClamAV->>S3: DeleteObject (removes infected file)
+        end
+        opt If SNS_TOPIC_ARN is set
+            ClamAV->>SNS: Publishes JSON Scan Alert
+        end
     end
 
     %% 4. Event-Driven SQS Pull (Autonomous)
