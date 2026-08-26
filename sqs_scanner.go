@@ -330,7 +330,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		// 6. Send Webhook
 		webhookURL := getWebhookURL(objResp, opts["SQS_WEBHOOK_URL"])
 		if webhookURL != "" && clamdResult != nil {
-			sendWebhook(webhookURL, clamdResult, scanID, "s3://"+bucket+"/"+key)
+			publishAsyncResult(webhookURL, clamdResult, scanID, "s3://"+bucket+"/"+key)
 		}
 	}
 	
