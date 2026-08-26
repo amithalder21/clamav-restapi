@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/dutchcoders/go-clamd"
+	"github.com/redis/go-redis/v9"
 )
 
 var opts map[string]string
+var redisClient *redis.Client
 
 func init() {
 	log.SetOutput(io.Discard)
@@ -198,9 +200,18 @@ func main() {
 		opts["CLAMD_PORT"] = "tcp://localhost:3310"
 	}
 
-	slog.Info("Starting clamav rest bridge")
-	slog.Info("Connecting to clamd", slog.String("port", opts["CLAMD_PORT"]))
-	
+	slog.Info("Starting clamav-restapi", slog.String("port", PORT), slog.String("clamd_port", opts["CLAMD_PORT"]))
+
+	if redisURL := opts["REDIS_URL"]; redisURL != "" {
+		opt, err := redis.ParseURL(redisURL)
+		if err != nil {
+			slog.Error("Failed to parse REDIS_URL", slog.Any("error", err))
+		} else {
+			redisClient = redis.NewClient(opt)
+			slog.Info("Redis/Dragonfly caching enabled", slog.String("redis_url", redisURL))
+		}
+	}
+
 	if sqsQueueURL, ok := opts["SQS_QUEUE_URL"]; ok && sqsQueueURL != "" {
 		go startSQSConsumer(sqsQueueURL)
 	}
@@ -209,18 +220,19 @@ func main() {
 
 	slog.Info("Connected to clamd", slog.String("port", opts["CLAMD_PORT"]))
 
-	http.HandleFunc("/scan", AuthMiddleware(scanHandler))
-	http.HandleFunc("/scanPath", AuthMiddleware(scanPathHandler))
-	http.HandleFunc("/scan-url", AuthMiddleware(scanURLHandler))
-	http.HandleFunc("/scan-async", AuthMiddleware(scanAsyncHandler))
-	http.HandleFunc("/scan-url-async", AuthMiddleware(scanURLAsyncHandler))
-	http.HandleFunc("/scan-s3-event", AuthMiddleware(scanS3EventHandler))
+	http.HandleFunc("/api/v1/scan/file", AuthMiddleware(scanHandler))
+	http.HandleFunc("/api/v1/scan/local-path", AuthMiddleware(scanPathHandler))
+	http.HandleFunc("/api/v1/scan/url", AuthMiddleware(scanURLHandler))
+	http.HandleFunc("/api/v1/async-scan/file", AuthMiddleware(scanAsyncHandler))
+	http.HandleFunc("/api/v1/async-scan/url", AuthMiddleware(scanURLAsyncHandler))
+	http.HandleFunc("/api/v1/events/s3", AuthMiddleware(scanS3EventHandler))
 	
 	// Admin Endpoints
-	http.HandleFunc("/admin/status", AdminAuthMiddleware(adminStatusHandler))
-	http.HandleFunc("/admin/reload", AdminAuthMiddleware(adminReloadHandler))
-	http.HandleFunc("/admin/update-signatures", AdminAuthMiddleware(adminUpdateSignaturesHandler))
+	http.HandleFunc("/api/v1/admin/status", AdminAuthMiddleware(adminStatusHandler))
+	http.HandleFunc("/api/v1/admin/reload", AdminAuthMiddleware(adminReloadHandler))
+	http.HandleFunc("/api/v1/admin/update-signatures", AdminAuthMiddleware(adminUpdateSignaturesHandler))
 	
+	http.HandleFunc("/api/v1/health", home)
 	http.HandleFunc("/", home)
 
 	// Start the HTTPS server in a goroutine

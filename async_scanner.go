@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dutchcoders/go-clamd"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 type AsyncURLScanRequest struct {
@@ -25,11 +27,23 @@ type AsyncResponse struct {
 	Filename string `json:"filename,omitempty"`
 }
 
-func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string, filename string) {
+func publishAsyncResult(webhookURL string, s *clamd.ScanResult, scanID string, filename string) {
+	payload, _ := formatScanResponse(s, scanID, filename)
+	
+	// Cache the result in Redis if configured
+	if redisClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := redisClient.Set(ctx, scanID, payload, 24*time.Hour).Err()
+		if err != nil {
+			slog.Error("Failed to cache scan result in Redis", slog.String("scan_id", scanID), slog.Any("error", err))
+		}
+	}
+
 	if webhookURL == "" {
 		return
 	}
-	payload, _ := formatScanResponse(s, scanID, filename)
+
 	// We run this in a fire-and-forget goroutine to avoid blocking the clamd stream processing
 	go func() {
 		resp, err := SafeHTTPClient().Post(webhookURL, "application/json", bytes.NewBufferString(payload))
@@ -43,6 +57,10 @@ func sendWebhook(webhookURL string, s *clamd.ScanResult, scanID string, filename
 }
 
 func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		handleAsyncPolling(w, r)
+		return
+	}
 	if r.Method != "POST" {
 		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -81,14 +99,14 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		resp, err := SafeHTTPClient().Get(req.URL)
 		if err != nil {
 			slog.Error("Failed to fetch URL", slog.String("scan_id", scanID), slog.String("url", req.URL), slog.Any("error", err))
-			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to fetch URL: %v", err)}, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to fetch URL: %v", err)}, scanID, req.URL)
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			slog.Error("URL returned non-200 status", slog.String("scan_id", scanID), slog.String("url", req.URL), slog.Int("status_code", resp.StatusCode))
-			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode)}, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode)}, scanID, req.URL)
 			return
 		}
 
@@ -103,7 +121,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		clamdResponse, err := c.ScanStream(limitedBody, abort)
 		if err != nil {
 			slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
-			sendWebhook(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, req.URL)
 			return
 		}
 		
@@ -115,12 +133,16 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 				slog.String("description", s.Description),
 				slog.Duration("duration_ms", time.Since(start)),
 			)
-			sendWebhook(req.WebhookURL, s, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, s, scanID, req.URL)
 		}
 	}()
 }
 
 func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		handleAsyncPolling(w, r)
+		return
+	}
 	if r.Method != "POST" {
 		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -182,7 +204,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		f, err := os.Open(filename)
 		if err != nil {
 			slog.Error("Failed to open temp file", slog.String("scan_id", scanID), slog.Any("error", err))
-			sendWebhook(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Failed to read uploaded file"}, scanID, originalName)
+			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Failed to read uploaded file"}, scanID, originalName)
 			return
 		}
 		defer f.Close()
@@ -195,7 +217,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		clamdResponse, err := c.ScanStream(f, abort)
 		if err != nil {
 			slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
-			sendWebhook(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, originalName)
+			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, originalName)
 			return
 		}
 		
@@ -207,7 +229,33 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 				slog.String("description", s.Description),
 				slog.Duration("duration_ms", time.Since(start)),
 			)
-			sendWebhook(webhookURL, s, scanID, originalName)
+			publishAsyncResult(webhookURL, s, scanID, originalName)
 		}
 	}(tempFile.Name(), header.Filename)
+}
+
+func handleAsyncPolling(w http.ResponseWriter, r *http.Request) {
+	scanID := r.URL.Query().Get("scan_id")
+	if scanID == "" {
+		writeJSONError(w, "scan_id query parameter is required for polling", http.StatusBadRequest)
+		return
+	}
+	if redisClient == nil {
+		writeJSONError(w, "Polling is disabled because REDIS_URL is not configured", http.StatusNotImplemented)
+		return
+	}
+	
+	val, err := redisClient.Get(r.Context(), scanID).Result()
+	if err == redis.Nil {
+		writeJSONError(w, "Scan not found or still processing", http.StatusNotFound)
+		return
+	} else if err != nil {
+		slog.Error("Failed to get scan result from Redis", slog.String("scan_id", scanID), slog.Any("error", err))
+		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(val))
 }

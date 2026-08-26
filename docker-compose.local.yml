@@ -36,6 +36,12 @@ services:
     ports:
       - "8080:8080"
 
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    container_name: clamrest-dragonfly
+    ports:
+      - "6379:6379"
+
   clamav-rest:
     build:
       context: .              # repo root (contains the Dockerfile) — drop this file into repo root
@@ -45,6 +51,8 @@ services:
       localstack:
         condition: service_healthy
       webhook-receiver:
+        condition: service_started
+      dragonfly:
         condition: service_started
     ports:
       - "9000:9000"
@@ -75,6 +83,7 @@ services:
       - QUARANTINE_S3_BUCKET=clamrest-quarantine
       - SQS_WEBHOOK_URL=http://webhook-receiver:8080/webhook
       - ALLOW_PRIVATE_IPS=true
+      - REDIS_URL=redis://dragonfly:6379
 
     volumes:
       - scan-data:/scan-data
