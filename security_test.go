@@ -26,10 +26,10 @@ func TestSafeHTTPClient(t *testing.T) {
 }
 
 func TestPathTraversalBlock(t *testing.T) {
-	// Set SCAN_BASE_DIR to /tmp for testing
-	os.Setenv("SCAN_BASE_DIR", "/tmp")
+	// Set APP_LOCAL_SCAN_DIR to /tmp for testing
+	os.Setenv("APP_LOCAL_SCAN_DIR", "/tmp")
 	opts = make(map[string]string)
-	opts["SCAN_BASE_DIR"] = "/tmp"
+	opts["APP_LOCAL_SCAN_DIR"] = "/tmp"
 
 	req, err := http.NewRequest("GET", "/scanPath?path=../../etc/passwd", nil)
 	if err != nil {
@@ -54,9 +54,9 @@ func TestPathTraversalBlock(t *testing.T) {
 }
 
 func TestPathTraversalBlockAbsolute(t *testing.T) {
-	os.Setenv("SCAN_BASE_DIR", "/tmp")
+	os.Setenv("APP_LOCAL_SCAN_DIR", "/tmp")
 	opts = make(map[string]string)
-	opts["SCAN_BASE_DIR"] = "/tmp"
+	opts["APP_LOCAL_SCAN_DIR"] = "/tmp"
 
 	req, err := http.NewRequest("GET", "/scanPath?path=/etc/passwd", nil)
 	if err != nil {

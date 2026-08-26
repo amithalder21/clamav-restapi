@@ -27,7 +27,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := clamd.NewClamd(opts["CLAMD_PORT"])
+	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 
 	// Ping clamd to ensure it is responsive
 	err := c.Ping()
@@ -50,7 +50,7 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 
 	requestedPath := paths[0]
 
-	baseDir := opts["SCAN_BASE_DIR"]
+	baseDir := opts["APP_LOCAL_SCAN_DIR"]
 	if baseDir == "" {
 		baseDir = "/tmp" // Secure default
 	}
@@ -68,7 +68,7 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := clamd.NewClamd(opts["CLAMD_PORT"])
+	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 	response, err := c.AllMatchScanFile(targetPath)
 
 	if err != nil {
@@ -95,7 +95,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 		// Bound the stream length to the MAX_FILE_SIZE + 1MB overhead
 		r.Body = http.MaxBytesReader(w, r.Body, maxFileSizeBytes + 1024*1024)
 
-		c := clamd.NewClamd(opts["CLAMD_PORT"])
+		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		//get the multipart reader for the request.
 		reader, err := r.MultipartReader()
 
@@ -196,8 +196,8 @@ func main() {
 		opts[pair[0]] = pair[1]
 	}
 
-	if opts["CLAMD_PORT"] == "" {
-		opts["CLAMD_PORT"] = "tcp://localhost:3310"
+	if opts["APP_CLAMD_ENDPOINT"] == "" {
+		opts["APP_CLAMD_ENDPOINT"] = "tcp://localhost:3310"
 	}
 
 	slog.Info("Starting ClamAV REST API")
@@ -214,13 +214,13 @@ func main() {
 		}
 	}
 
-	if sqsQueueURL, ok := opts["SQS_QUEUE_URL"]; ok && sqsQueueURL != "" {
+	if sqsQueueURL, ok := opts["AWS_AWS_SQS_QUEUE_URL"]; ok && sqsQueueURL != "" {
 		go startSQSConsumer(sqsQueueURL)
 	}
 	
-	waitForClamD(opts["CLAMD_PORT"], 1)
+	waitForClamD(opts["APP_CLAMD_ENDPOINT"], 1)
 
-	slog.Info("Connected to clamd", slog.String("port", opts["CLAMD_PORT"]))
+	slog.Info("Connected to clamd", slog.String("port", opts["APP_CLAMD_ENDPOINT"]))
 
 	http.HandleFunc("/api/v1/scan/file", AuthMiddleware(scanHandler))
 	http.HandleFunc("/api/v1/scan/local-path", AuthMiddleware(scanPathHandler))

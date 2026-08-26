@@ -116,7 +116,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		limitedBody := http.MaxBytesReader(nil, resp.Body, maxFileSizeBytes+1024*1024)
 
-		c := clamd.NewClamd(opts["CLAMD_PORT"])
+		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(limitedBody, abort)
 		if err != nil {
@@ -212,7 +212,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Info("Started scanning", slog.String("scan_id", scanID), slog.String("filename", originalName))
 		start := time.Now()
 		
-		c := clamd.NewClamd(opts["CLAMD_PORT"])
+		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		var abort chan bool
 		clamdResponse, err := c.ScanStream(f, abort)
 		if err != nil {

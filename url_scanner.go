@@ -58,7 +58,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	limitedBody := http.MaxBytesReader(nil, resp.Body, maxFileSizeBytes+1024*1024)
 
-	c := clamd.NewClamd(opts["CLAMD_PORT"])
+	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 	var abort chan bool
 	clamdResponse, err := c.ScanStream(limitedBody, abort)
 	

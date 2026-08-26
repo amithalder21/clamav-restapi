@@ -48,7 +48,7 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := clamd.NewClamd(opts["CLAMD_PORT"])
+	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 	
 	versionChan, err := c.Version()
 	if err != nil {
@@ -82,7 +82,7 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	safeConfig := make(map[string]string)
 	for k, v := range opts {
-		if strings.HasPrefix(k, "MAX_") || strings.HasPrefix(k, "PCRE_") || strings.HasPrefix(k, "SIGNATURE_") || k == "PORT" || k == "CLAMD_PORT" {
+		if strings.HasPrefix(k, "MAX_") || strings.HasPrefix(k, "PCRE_") || strings.HasPrefix(k, "SIGNATURE_") || k == "PORT" || k == "APP_CLAMD_ENDPOINT" {
 			safeConfig[k] = v
 		}
 	}
@@ -114,7 +114,7 @@ func adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := clamd.NewClamd(opts["CLAMD_PORT"])
+	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 	err := c.Reload()
 	
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -156,7 +156,7 @@ func adminUpdateSignaturesHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Info("freshclam succeeded", slog.String("output", string(out)))
 		
 		// Optionally reload clamd after update
-		c := clamd.NewClamd(opts["CLAMD_PORT"])
+		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		c.Reload()
 	}()
 }
