@@ -65,13 +65,12 @@ services:
       - MAX_FILES=10000
 
       # --- Auth ---
-      - API_KEY=local-test-api-key
-      - ADMIN_API_KEY=local-test-admin-key
 
       # --- Path-scan sandbox for /scanPath ---
       - SCAN_BASE_DIR=/scan-data
 
       # --- Dummy AWS / LocalStack wiring ---
+      - COGNITO_JWKS_URL=http://cognito-local:9229/local_4qK8k8k8/.well-known/jwks.json
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
@@ -87,6 +86,14 @@ services:
 
     volumes:
       - scan-data:/scan-data
+
+  cognito-local:
+    image: jagregory/cognito-local:latest
+    container_name: clamrest-cognito
+    ports:
+      - "9229:9229"
+    volumes:
+      - ./.cognito:/app/.cognito
 
 volumes:
   scan-data:
