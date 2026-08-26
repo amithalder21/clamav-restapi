@@ -83,7 +83,7 @@ sequenceDiagram
         else If INFECTED & AWS_S3_DELETE_INFECTED=true
             ClamAV->>S3: DeleteObject (removes infected file)
         end
-        opt If AWS_AWS_SNS_TOPIC_ARN is set
+        opt If AWS_SNS_TOPIC_ARN is set
             ClamAV->>SNS: Publishes JSON Scan Alert
         end
     end
@@ -102,7 +102,7 @@ sequenceDiagram
         else If INFECTED & AWS_S3_DELETE_INFECTED=true
             ClamAV->>S3: DeleteObject (removes infected file)
         end
-        opt If AWS_AWS_SNS_TOPIC_ARN is set
+        opt If AWS_SNS_TOPIC_ARN is set
             ClamAV->>SNS: Publishes JSON Scan Alert
         end
     end
@@ -125,18 +125,18 @@ Below is the complete list of available environment variables that can be used t
 |-----------|-------------|
 | `COGNITO_JWKS_URL` | The URL to your Cognito User Pool's JWKS endpoint (e.g. `https://cognito-idp.us-east-1.amazonaws.com/USER_POOL_ID/.well-known/jwks.json`). If not set, authentication is disabled. |
 | `COGNITO_ISSUER` | (Optional) The expected `iss` claim to validate in the JWT (e.g. `https://cognito-idp.us-east-1.amazonaws.com/USER_POOL_ID`). |
-| `AWS_AWS_SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
+| `AWS_SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
 | `APP_WEBHOOK_URL` | Fallback webhook URL to hit after an S3 object is scanned and tagged. |
 | `AWS_S3_DELETE_INFECTED` | If `true`, the scanner will actively delete infected files from S3. |
 | `AWS_S3_QUARANTINE_BUCKET`| If set to a bucket name, infected files will be copied here and deleted from the source bucket. |
-| `AWS_AWS_SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
+| `AWS_SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
 | `AWS_SNS_ONLY_INFECTED` | If `true`, the scanner will only publish to SNS if a file is infected. |
 | `AWS_REGION` | The AWS Region your queue and bucket reside in (e.g. `us-east-1`). |
 | `AWS_ENDPOINT_URL` | Optional custom endpoint URL for S3/SQS (useful for LocalStack, MinIO, or Ceph). |
 | `AWS_ACCESS_KEY_ID` | Your AWS Access Key. Not required if running inside ECS Fargate with a Task Role. |
 | `AWS_SECRET_ACCESS_KEY` | Your AWS Secret Key. Not required if running inside ECS Fargate with a Task Role. |
 | `AWS_SESSION_TOKEN` | Your AWS Session Token. Not required if using standard IAM User or Task Role. |
-| `APP_APP_ALLOW_PRIVATE_IPS` | If `true`, disables SSRF protection and allows webhooks/URLs to hit private subnets (e.g., `10.x`, `172.x`). Use only for isolated testing! |
+| `APP_ALLOW_PRIVATE_IPS` | If `true`, disables SSRF protection and allows webhooks/URLs to hit private subnets (e.g., `10.x`, `172.x`). Use only for isolated testing! |
 | `APP_CLAMD_ENDPOINT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `APP_LOCAL_SCAN_DIR` | Secures `/api/v1/scan/local-path` by strictly restricting path traversal outside this mount directory. Default `/tmp`. |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `200M` |
@@ -171,11 +171,11 @@ docker run -d \
   -p 9000:9000 \
   -e COGNITO_JWKS_URL="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_12345/.well-known/jwks.json" \
   -e COGNITO_ISSUER="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_12345" \
-  -e AWS_AWS_SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/123/my-queue" \
+  -e AWS_SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/123/my-queue" \
   -e APP_WEBHOOK_URL="https://webhook.site/your-id" \
   -e AWS_S3_DELETE_INFECTED="false" \
   -e AWS_S3_QUARANTINE_BUCKET="my-quarantine-bucket" \
-  -e AWS_AWS_SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123:my-topic" \
+  -e AWS_SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123:my-topic" \
   -e AWS_SNS_ONLY_INFECTED="true" \
   -e AWS_REGION="us-east-1" \
   -e AWS_ACCESS_KEY_ID="AKIA..." \
@@ -266,7 +266,7 @@ HTTP/1.1 200 OK
 This project natively integrates with AWS to provide seamless event-driven file scanning, which removes the need to stream bytes through your backend API. There are two ways to use this feature:
 
 ### 1. Autonomous SQS Background Poller (Recommended)
-If you pass the `AWS_AWS_SQS_QUEUE_URL` environment variable to the container, it launches a background goroutine that constantly long-polls the SQS queue for S3 `ObjectCreated` events. 
+If you pass the `AWS_SQS_QUEUE_URL` environment variable to the container, it launches a background goroutine that constantly long-polls the SQS queue for S3 `ObjectCreated` events. 
 When a file is uploaded to your bucket, S3 sends an event to SQS. The container intercepts it, streams the file directly from S3 to the ClamAV daemon (bypassing disk and memory storage), and applies an S3 Object Tag with the result.
 
 ### 2. HTTP API Push (EventBridge / API Gateway)
@@ -281,7 +281,7 @@ HTTP/1.1 202 Accepted
 ### Advanced S3 Features
 Regardless of which method you use, the integration handles the following natively:
 - **Non-Destructive S3 Auto-Tagging**: After ClamAV finishes its scan, the API calls `s3.GetObjectTagging` to retrieve your existing tags, safely appends `av-status=CLEAN` (or `INFECTED`), `av-signature`, and `av-timestamp`, and then updates the file. Your custom tags are perfectly preserved!
-- **SNS Security Alerts**: If you provide the `AWS_AWS_SNS_TOPIC_ARN` variable, the container will instantly push a JSON event containing the scan results directly to an AWS SNS Topic. By turning on `AWS_SNS_ONLY_INFECTED=true`, your team will *only* be alerted when actual malware is found.
+- **SNS Security Alerts**: If you provide the `AWS_SNS_TOPIC_ARN` variable, the container will instantly push a JSON event containing the scan results directly to an AWS SNS Topic. By turning on `AWS_SNS_ONLY_INFECTED=true`, your team will *only* be alerted when actual malware is found.
 - **Malware Quarantine**: If you define `AWS_S3_QUARANTINE_BUCKET`, any discovered malware is immediately copied to a safe, isolated quarantine bucket (preserving the `av-status=INFECTED` tag) and then securely deleted from the source upload bucket. This allows your security team to safely inspect the malware payload without exposing your users.
 - **Auto-Deletion**: Alternatively, if you set `AWS_S3_DELETE_INFECTED=true` without a quarantine bucket, the container will simply `s3.DeleteObject` the very millisecond a virus is detected.
 - **Webhook Routing**: To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `APP_WEBHOOK_URL` environment variable.
