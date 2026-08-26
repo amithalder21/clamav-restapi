@@ -19,6 +19,13 @@ REGION="us-east-1"
 POOL_ID=$(aws --endpoint-url=$ENDPOINT cognito-idp create-user-pool --pool-name test-pool --region $REGION --query 'UserPool.Id' --output text)
 CLIENT_ID=$(aws --endpoint-url=$ENDPOINT cognito-idp create-user-pool-client --user-pool-id $POOL_ID --client-name test-client --region $REGION --query 'UserPoolClient.ClientId' --output text)
 
+# Restart clamav-rest with the dynamic pool ID so issuer validation passes
+echo "Injecting dynamic POOL_ID ($POOL_ID) into clamav-rest environment..."
+export COGNITO_JWKS_URL="http://cognito-local:9229/$POOL_ID/.well-known/jwks.json"
+export COGNITO_ISSUER="http://0.0.0.0:9229/$POOL_ID"
+docker compose -f docker-compose.local.yml up -d clamav-rest
+sleep 3 # Wait for the app to pick up the new keys
+
 # Provision admin user and group
 aws --endpoint-url=$ENDPOINT cognito-idp admin-create-user --user-pool-id $POOL_ID --username "admin@test.com" --message-action SUPPRESS --region $REGION >/dev/null 2>&1 || true
 aws --endpoint-url=$ENDPOINT cognito-idp admin-set-user-password --user-pool-id $POOL_ID --username "admin@test.com" --password "Password1!" --permanent --region $REGION >/dev/null

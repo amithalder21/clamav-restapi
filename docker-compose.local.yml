@@ -67,7 +67,8 @@ services:
       # --- Auth ---
 
       # --- Dummy AWS / LocalStack wiring ---
-      - COGNITO_JWKS_URL=http://cognito-local:9229/local_4qK8k8k8/.well-known/jwks.json
+      - COGNITO_JWKS_URL=${COGNITO_JWKS_URL:-http://cognito-local:9229/local_4qK8k8k8/.well-known/jwks.json}
+      - COGNITO_ISSUER=${COGNITO_ISSUER:-http://0.0.0.0:9229/local_4qK8k8k8}
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test

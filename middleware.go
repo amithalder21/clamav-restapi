@@ -72,17 +72,20 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		expectedIssuer := os.Getenv("COGNITO_ISSUER")
-		if expectedIssuer != "" {
-			claims, ok := token.Claims.(jwt.MapClaims)
-			if !ok {
-				writeJSONError(w, "Unauthorized (invalid claims)", http.StatusUnauthorized)
-				return
-			}
-			iss, _ := claims["iss"].(string)
-			if iss != expectedIssuer {
-				writeJSONError(w, "Unauthorized (invalid issuer)", http.StatusUnauthorized)
-				return
-			}
+		if expectedIssuer == "" {
+			slog.Error("COGNITO_ISSUER is not configured")
+			writeJSONError(w, "Internal Server Error (auth misconfigured)", http.StatusInternalServerError)
+			return
+		}
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			writeJSONError(w, "Unauthorized (invalid claims)", http.StatusUnauthorized)
+			return
+		}
+		iss, _ := claims["iss"].(string)
+		if iss != expectedIssuer {
+			writeJSONError(w, "Unauthorized (invalid issuer)", http.StatusUnauthorized)
+			return
 		}
 
 		next.ServeHTTP(w, r)
@@ -117,12 +120,15 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		expectedIssuer := os.Getenv("COGNITO_ISSUER")
-		if expectedIssuer != "" {
-			iss, _ := claims["iss"].(string)
-			if iss != expectedIssuer {
-				writeJSONError(w, "Forbidden (invalid issuer)", http.StatusForbidden)
-				return
-			}
+		if expectedIssuer == "" {
+			slog.Error("COGNITO_ISSUER is not configured")
+			writeJSONError(w, "Internal Server Error (auth misconfigured)", http.StatusInternalServerError)
+			return
+		}
+		iss, _ := claims["iss"].(string)
+		if iss != expectedIssuer {
+			writeJSONError(w, "Forbidden (invalid issuer)", http.StatusForbidden)
+			return
 		}
 
 		isAdmin := false
