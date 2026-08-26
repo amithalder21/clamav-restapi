@@ -37,12 +37,20 @@ This sequence diagram maps out every single API endpoint, background worker, and
 ```mermaid
 sequenceDiagram
     participant Client as User / API
+    participant Cognito as AWS Cognito
     participant EventBridge as AWS EventBridge
     participant S3 as AWS S3
     participant SQS as AWS SQS
     participant ClamAV as ClamAV Fargate (REST API)
     participant SNS as AWS SNS Topic
     participant Webhook as Webhook Endpoint
+
+    %% 0. M2M Authentication (Client Credentials Grant)
+    rect rgb(253, 245, 230)
+        Note over Client, Cognito: 0. M2M Authentication (OAuth 2.0)
+        Client->>Cognito: POST /oauth2/token (Client ID + Secret)
+        Cognito-->>Client: HTTP 200 OK (Access Token)
+    end
 
     %% 1. Synchronous Scan
     rect rgb(240, 248, 255)
@@ -102,7 +110,7 @@ sequenceDiagram
     %% 5. Admin API
     rect rgb(245, 245, 245)
         Note over Client, ClamAV: 5. Admin API
-        Client->>ClamAV: GET /api/v1/admin/status (with X-API-Key)
+        Client->>ClamAV: GET /api/v1/admin/status (Authorization: Bearer <Token>)
         ClamAV-->>Client: HTTP 200 OK (Daemon Health & Metrics)
     end
 ```
