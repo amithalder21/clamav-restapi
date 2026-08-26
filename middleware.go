@@ -64,7 +64,7 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		token, err := jwt.Parse(tokenStr, jwks.Keyfunc)
+		token, err := jwt.Parse(tokenStr, jwks.Keyfunc, jwt.WithValidMethods([]string{"RS256"}))
 		if err != nil || !token.Valid {
 			slog.Error("Invalid JWT", slog.Any("error", err))
 			writeJSONError(w, "Unauthorized (invalid token)", http.StatusUnauthorized)
@@ -103,7 +103,7 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		token, err := jwt.Parse(tokenStr, jwks.Keyfunc)
+		token, err := jwt.Parse(tokenStr, jwks.Keyfunc, jwt.WithValidMethods([]string{"RS256"}))
 		if err != nil || !token.Valid {
 			slog.Error("Invalid admin JWT", slog.Any("error", err))
 			writeJSONError(w, "Forbidden (invalid token)", http.StatusForbidden)
