@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o clamav-rest .
 # Runtime stage
 FROM rockylinux:9
 
-RUN dnf -y update && dnf clean all
+RUN dnf -y upgrade --refresh && dnf clean all
 
 # Install EPEL for ClamAV
 RUN dnf install -y epel-release && dnf clean all
