@@ -11,6 +11,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/dutchcoders/go-clamd"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -230,6 +233,30 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 				slog.Duration("duration_ms", time.Since(start)),
 			)
 			publishAsyncResult(webhookURL, s, scanID, originalName)
+			
+			if s.Status == clamd.RES_FOUND {
+				quarantineBucket := opts["AWS_S3_QUARANTINE_BUCKET"]
+				if quarantineBucket != "" {
+					cfg, err := config.LoadDefaultConfig(context.TODO())
+					if err != nil {
+						slog.Error("Failed to load AWS config for quarantine", slog.Any("error", err))
+					} else {
+						s3Client := s3.NewFromConfig(cfg)
+						f.Seek(0, 0)
+						key := scanID + "-" + originalName
+						_, err = s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+							Bucket: aws.String(quarantineBucket),
+							Key:    aws.String(key),
+							Body:   f,
+						})
+						if err != nil {
+							slog.Error("Failed to upload to quarantine bucket", slog.String("bucket", quarantineBucket), slog.String("key", key), slog.Any("error", err))
+						} else {
+							slog.Info("Successfully uploaded infected file to quarantine bucket", slog.String("bucket", quarantineBucket), slog.String("key", key))
+						}
+					}
+				}
+			}
 		}
 	}(tempFile.Name(), header.Filename)
 }
