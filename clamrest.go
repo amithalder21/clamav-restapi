@@ -149,8 +149,10 @@ func main() {
 	opts = make(map[string]string)
 
 	for _, e := range os.Environ() {
-		pair := strings.Split(e, "=")
-		opts[pair[0]] = pair[1]
+		pair := strings.SplitN(e, "=", 2)
+		if len(pair) == 2 {
+			opts[strings.TrimSpace(pair[0])] = strings.TrimSpace(pair[1])
+		}
 	}
 
 	if opts["APP_CLAMD_ENDPOINT"] == "" {
