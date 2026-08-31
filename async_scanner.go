@@ -241,7 +241,11 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						slog.Error("Failed to load AWS config for quarantine", slog.Any("error", err))
 					} else {
-						s3Client := s3.NewFromConfig(cfg)
+						s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+							if os.Getenv("AWS_ENDPOINT_URL") != "" {
+								o.UsePathStyle = true
+							}
+						})
 						f.Seek(0, 0)
 						key := scanID + "-" + originalName
 						_, err = s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
