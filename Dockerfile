@@ -11,33 +11,24 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o clamav-rest .
 # Runtime stage
 FROM rockylinux:9
 
-RUN dnf -y upgrade --refresh && dnf clean all
-
-# Install EPEL for ClamAV
-RUN dnf install -y epel-release && dnf clean all
-
-# Install ClamAV, YARA, and utilities for Maldet
-RUN dnf install -y clamav-server clamav-data clamav-update clamav-filesystem clamav clamav-scanner-systemd clamav-lib \
-    yara wget tar gzip inotify-tools perl \
+RUN dnf -y upgrade --refresh \
+    && dnf install -y epel-release \
+    && dnf install -y clamav-server clamav-data clamav-update clamav-filesystem clamav clamav-scanner-systemd clamav-lib \
+       yara wget tar gzip inotify-tools perl \
     && mkdir -p /run/clamav \
-    && chown clamupdate:clamupdate /run/clamav 2>/dev/null || chown clamscan:clamscan /run/clamav
-
-# Install Maldet
-RUN cd /tmp && \
-    wget https://www.rfxn.com/downloads/maldetect-current.tar.gz && \
-    tar -xzvf maldetect-current.tar.gz && \
-    rm -f maldetect-current.tar.gz && \
-    cd maldetect-* && \
-    sh install.sh && \
-    maldet -u -d && \
-    cd / && rm -rf /tmp/maldetect*
-
-# Clean
-RUN dnf clean -y all --enablerepo='*' && \
-    rm -Rf /tmp/*
-
-# Set timezone to Europe/Zurich
-RUN ln -sf /usr/share/zoneinfo/Europe/Zurich /etc/localtime
+    && (chown clamupdate:clamupdate /run/clamav 2>/dev/null || chown clamscan:clamscan /run/clamav) \
+    && cd /tmp \
+    && wget https://www.rfxn.com/downloads/maldetect-current.tar.gz \
+    && tar -xzvf maldetect-current.tar.gz \
+    && rm -f maldetect-current.tar.gz \
+    && cd maldetect-* \
+    && sh install.sh \
+    && maldet -u -d \
+    && cd / \
+    && rm -rf /tmp/maldetect* \
+    && dnf clean -y all --enablerepo='*' \
+    && rm -Rf /tmp/* \
+    && ln -sf /usr/share/zoneinfo/Europe/Zurich /etc/localtime
 
 # Configure clamAV to run in foreground with port 3310
 # Also comment out Example in scan.conf and freshclam.conf
