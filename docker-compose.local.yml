@@ -57,12 +57,15 @@ services:
     ports:
       - "9000:9000"
       - "9443:9443"
+    tmpfs:
+      - /scans
     environment:
       # --- Core / clamd tuning ---
       - MAX_SCAN_SIZE=200M
       - MAX_FILE_SIZE=100M
       - MAX_RECURSION=16
       - MAX_FILES=10000
+      - ASYNC_TEMP_DIR=/scans
 
       # --- Auth ---
 

@@ -176,7 +176,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Create a temp file to hold the upload so we can return HTTP 202 immediately and free the connection
-	tempFile, err := os.CreateTemp("", "clamav-async-upload-*")
+	tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "clamav-async-upload-*")
 	if err != nil {
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
