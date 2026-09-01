@@ -50,7 +50,16 @@ RUN sed -i 's/^Example$/# Example/g' /etc/clamd.d/scan.conf 2>/dev/null || true 
 # If scan.conf doesn't exist (sometimes the package puts it in /etc/clamd.conf in rockylinux)
 RUN [ -f /etc/clamd.conf ] && sed -i 's/^Example$/# Example/g' /etc/clamd.conf || true \
     && [ -f /etc/clamd.conf ] && sed -i 's/^#Foreground .*$/Foreground true/g' /etc/clamd.conf || true \
-    && [ -f /etc/clamd.conf ] && sed -i 's/^#TCPSocket .*$/TCPSocket 3310/g' /etc/clamd.conf || true
+    && [ -f /etc/clamd.conf ] && sed -i 's/^#TCPSocket .*$/TCPSocket 3310/g' /etc/clamd.conf || true \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/malwarehash.hsb' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/foxhole_generic.cdb' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/foxhole_js.cdb' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/phish.ndb' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/scam.ndb' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/rogue.hdb' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/badmacro.ndb' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/sigwhitelist.ign2' >> /etc/freshclam.conf \
+    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/sanesecurity.ftm' >> /etc/freshclam.conf
 
 RUN freshclam --quiet --no-dns
 
