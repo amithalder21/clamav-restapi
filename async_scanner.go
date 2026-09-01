@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -217,24 +219,86 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		var abort chan bool
-		clamdResponse, err := c.ScanStream(f, abort)
-		if err != nil {
-			slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
-			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, originalName)
-			return
+
+		var wg sync.WaitGroup
+		wg.Add(3)
+
+		var clamResult *clamd.ScanResult
+		var yaraResult EngineResult
+		var maldetResult EngineResult
+
+		// Worker 1: ClamAV (TCP Stream)
+		go func() {
+			defer wg.Done()
+			clamdResponse, err := c.ScanStream(f, abort)
+			if err != nil {
+				slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
+				clamResult = &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}
+				return
+			}
+			for s := range clamdResponse {
+				clamResult = s
+			}
+		}()
+
+		// Worker 2: YARA (os/exec)
+		go func() {
+			defer wg.Done()
+			yaraResult = RunYaraScan(filename)
+		}()
+
+		// Worker 3: Maldet (os/exec)
+		go func() {
+			defer wg.Done()
+			maldetResult = RunMaldetScan(filename)
+		}()
+
+		wg.Wait()
+
+		// Aggregate results
+		finalStatus := clamd.RES_OK
+		var descriptions []string
+
+		if clamResult != nil {
+			if clamResult.Status == clamd.RES_FOUND {
+				finalStatus = clamd.RES_FOUND
+				descriptions = append(descriptions, "ClamAV:"+clamResult.Description)
+			}
 		}
+
+		if yaraResult.IsInfected {
+			finalStatus = clamd.RES_FOUND
+			descriptions = append(descriptions, "YARA:"+yaraResult.Signature)
+		}
+
+		if maldetResult.IsInfected {
+			finalStatus = clamd.RES_FOUND
+			descriptions = append(descriptions, "Maldet:"+maldetResult.Signature)
+		}
+
+		finalDescription := "CLEAN"
+		if finalStatus == clamd.RES_FOUND {
+			finalDescription = strings.Join(descriptions, " | ")
+		} else if clamResult != nil && clamResult.Status == clamd.RES_ERROR {
+			finalStatus = clamd.RES_ERROR
+			finalDescription = clamResult.Description
+		}
+
+		aggregatedResult := &clamd.ScanResult{
+			Status:      finalStatus,
+			Description: finalDescription,
+		}
+
+		slog.Info("Finished scanning", 
+			slog.String("scan_id", scanID), 
+			slog.String("filename", originalName), 
+			slog.String("result", formatStatus(aggregatedResult.Status)), 
+			slog.String("description", aggregatedResult.Description),
+			slog.Duration("duration_ms", time.Since(start)),
+		)
+		publishAsyncResult(webhookURL, aggregatedResult, scanID, originalName)
 		
-		for s := range clamdResponse {
-			slog.Info("Finished scanning", 
-				slog.String("scan_id", scanID), 
-				slog.String("filename", originalName), 
-				slog.String("result", formatStatus(s.Status)), 
-				slog.String("description", s.Description),
-				slog.Duration("duration_ms", time.Since(start)),
-			)
-			publishAsyncResult(webhookURL, s, scanID, originalName)
-			
-			if s.Status == clamd.RES_FOUND {
+		if aggregatedResult.Status == clamd.RES_FOUND {
 				quarantineBucket := opts["AWS_S3_QUARANTINE_BUCKET"]
 				if quarantineBucket != "" {
 					cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -261,7 +325,6 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-		}
 	}(tempFile.Name(), header.Filename)
 }
 
