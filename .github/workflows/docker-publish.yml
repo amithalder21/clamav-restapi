@@ -41,7 +41,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Alpine Image (Default)
+      - name: Build and push Rocky Linux Image (Default)
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -49,16 +49,16 @@ jobs:
           push: true
           tags: |
             amithalder/clamav-restapi:latest
-            amithalder/clamav-restapi:alpine-latest
             amithalder/clamav-restapi:${{ steps.tag_version.outputs.new_tag }}
-            amithalder/clamav-restapi:alpine-${{ steps.tag_version.outputs.new_tag }}
+            amithalder/clamav-restapi:multi-engine-latest
+            amithalder/clamav-restapi:multi-engine-${{ steps.tag_version.outputs.new_tag }}
             
-      - name: Build and push Rocky Linux Image
+      - name: Build and push Alpine Image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./centos.Dockerfile
+          file: ./alpine.Dockerfile
           push: true
           tags: |
-            amithalder/clamav-restapi:rocky-latest
-            amithalder/clamav-restapi:rocky-${{ steps.tag_version.outputs.new_tag }}
+            amithalder/clamav-restapi:alpine-latest
+            amithalder/clamav-restapi:alpine-${{ steps.tag_version.outputs.new_tag }}
