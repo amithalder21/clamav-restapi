@@ -24,7 +24,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Advanced Malware & PDF Detection**: Pre-configured with third-party Sanesecurity signatures natively baked into the Docker image. Curated to aggressively block malicious macros, phishing payloads, and zero-day JavaScript embedded within PDFs—closing the gaps in standard ClamAV databases.
 - **Enterprise Audit Logging**: Full support for native structured JSON logs (`log/slog`), directly indexing `scan_id`, `duration_ms`, `result`, and `client_id` instantly into CloudWatch for security dashboards.
 - **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files, strict HTTP body size limits (`MaxBytesReader`) to prevent memory/disk exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
-- **SaaS Multi-Tenancy & Data Isolation**: Securely supports multi-tenant operations (e.g., Polestar's PurpleTrac/DocIntel) via Cognito JWT `client_id` extraction, strictly partitioning Redis/Dragonfly caching keys and S3 Quarantine routes per tenant.
+- **SaaS Multi-Tenancy & Data Isolation**: Securely supports multi-tenant operations (e.g., multiple enterprise applications) via Cognito JWT `client_id` extraction, strictly partitioning Redis/Dragonfly caching keys and S3 Quarantine routes per tenant.
 - **Concurrent Multi-Engine Scanning**: Analyzes files simultaneously across ClamAV, YARA (Behavioral), and Linux Malware Detect (Maldet) in separate Go routines, vastly improving zero-day and web-shell detection without a 3x time penalty.
 - **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks (with dynamic tenant-based webhook routing).
 - **Cloud URL Scanning**: Stream files directly from remote URLs to the engines without buffering in memory.
@@ -139,8 +139,10 @@ Below is the complete list of available environment variables that can be used t
 |-----------|-------------|
 | `COGNITO_JWKS_URL` | The URL to your Cognito User Pool's JWKS endpoint (e.g. `https://cognito-idp.us-east-1.amazonaws.com/USER_POOL_ID/.well-known/jwks.json`). If not set, authentication is disabled. |
 | `COGNITO_ISSUER` | (Optional) The expected `iss` claim to validate in the JWT (e.g. `https://cognito-idp.us-east-1.amazonaws.com/USER_POOL_ID`). |
+| `REDIS_URL` | The connection string for Dragonfly/Redis (e.g. `redis://dragonfly:6379`). Used for multi-tenant webhook caching and data isolation. |
 | `AWS_SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
-| `APP_WEBHOOK_URL` | Fallback webhook URL to hit after an S3 object is scanned and tagged. |
+| `APP_WEBHOOK_URL` | Fallback centralized webhook URL to hit after an S3 object is scanned or if an async scan provides no tenant-specific URL. |
+| `ASYNC_TEMP_DIR` | The temp directory to use when saving multipart uploads for async scanning (e.g., `/tmp`). |
 | `AWS_S3_DELETE_INFECTED` | If `true`, the scanner will actively delete infected files from S3. |
 | `AWS_S3_QUARANTINE_BUCKET`| If set to a bucket name, infected files will be copied here and deleted from the source bucket. |
 | `AWS_SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
@@ -174,7 +176,7 @@ Below is the complete list of available environment variables that can be used t
 You can pull the pre-built, automatically updated Docker image directly from Docker Hub:
 
 ```bash
-docker pull amithalder/clamav-restapi:alpine-latest
+docker pull amithalder/clamav-restapi:latest
 ```
 
 Run the `clamav-restapi` docker image locally passing any configuration variables using `-e`:
@@ -184,8 +186,10 @@ docker run -d \
   -p 9000:9000 \
   -e COGNITO_JWKS_URL="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_12345/.well-known/jwks.json" \
   -e COGNITO_ISSUER="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_12345" \
+  -e REDIS_URL="redis://dragonfly:6379" \
   -e AWS_SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/123/my-queue" \
   -e APP_WEBHOOK_URL="https://webhook.site/your-id" \
+  -e ASYNC_TEMP_DIR="/tmp" \
   -e AWS_S3_DELETE_INFECTED="false" \
   -e AWS_S3_QUARANTINE_BUCKET="my-quarantine-bucket" \
   -e AWS_SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123:my-topic" \
@@ -210,7 +214,7 @@ docker run -d \
   -e PCRE_RECMATCHLIMIT="2000" \
   -e SIGNATURE_CHECKS="24" \
   --name clamav-restapi \
-  amithalder/clamav-restapi:alpine-latest
+  amithalder/clamav-restapi:latest
 ```
 
 *(Note: Port 9000 is HTTP, Port 9443 is HTTPS. You can mount your own certs to `/etc/ssl/clamav-rest/` for TLS).*
