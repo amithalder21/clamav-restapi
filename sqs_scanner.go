@@ -56,6 +56,11 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 
 	scanID := uuid.New().String()
 	
+	tenantID, ok := r.Context().Value(TenantContextKey).(string)
+	if !ok || tenantID == "" {
+		tenantID = "default"
+	}
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{
@@ -75,7 +80,7 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		snsClient := sns.NewFromConfig(cfg)
-		processS3Event(s3Client, snsClient, string(bodyBytes), scanID)
+		processS3Event(s3Client, snsClient, string(bodyBytes), scanID, tenantID)
 	}()
 }
 
@@ -121,13 +126,15 @@ func startSQSConsumer(queueURL string) {
 
 func processSQSMessage(sqsClient *sqs.Client, s3Client *s3.Client, snsClient *sns.Client, queueURL string, body string, receiptHandle string) {
 	scanID := uuid.New().String()
-	processed := processS3Event(s3Client, snsClient, body, scanID)
+	// For raw SQS, we'll default tenantID or extract it from S3 object metadata/tags later if needed.
+	tenantID := "default"
+	processed := processS3Event(s3Client, snsClient, body, scanID, tenantID)
 	if processed {
 		deleteMessage(sqsClient, queueURL, receiptHandle)
 	}
 }
 
-func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, scanID string) bool {
+func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, scanID string, tenantID string) bool {
 	var s3Event S3Event
 	if err := json.Unmarshal([]byte(body), &s3Event); err != nil {
 		slog.Error("Failed to parse SQS message body", slog.String("scan_id", scanID), slog.Any("error", err))
@@ -329,8 +336,8 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 
 		// 6. Send Webhook
 		webhookURL := getWebhookURL(objResp, opts["APP_WEBHOOK_URL"])
-		if webhookURL != "" && clamdResult != nil {
-			publishAsyncResult(webhookURL, clamdResult, scanID, "s3://"+bucket+"/"+key)
+		if clamdResult != nil {
+			publishAsyncResult(webhookURL, clamdResult, scanID, "s3://"+bucket+"/"+key, tenantID)
 		}
 	}
 	

@@ -32,16 +32,33 @@ type AsyncResponse struct {
 	Filename string `json:"filename,omitempty"`
 }
 
-func publishAsyncResult(webhookURL string, s *clamd.ScanResult, scanID string, filename string) {
+type TenantConfig struct {
+	WebhookURL string `json:"webhook_url"`
+}
+
+func publishAsyncResult(webhookURL string, s *clamd.ScanResult, scanID string, filename string, tenantID string) {
 	payload, _ := formatScanResponse(s, scanID, filename)
 	
-	// Cache the result in Redis if configured
+	// Fetch Tenant Config from Redis for dynamic Webhook URL if available
 	if redisClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		err := redisClient.Set(ctx, scanID, payload, 24*time.Hour).Err()
+		configVal, err := redisClient.Get(ctx, "tenant:"+tenantID+":config").Result()
+		if err == nil && configVal != "" {
+			var tc TenantConfig
+			if json.Unmarshal([]byte(configVal), &tc) == nil && tc.WebhookURL != "" {
+				webhookURL = tc.WebhookURL // Override with authoritative tenant config
+			}
+		}
+	}
+
+	// Cache the result in Redis with Tenant partitioning
+	if redisClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := redisClient.Set(ctx, "tenant:"+tenantID+":scan:"+scanID, payload, 24*time.Hour).Err()
 		if err != nil {
-			slog.Error("Failed to cache scan result in Redis", slog.String("scan_id", scanID), slog.Any("error", err))
+			slog.Error("Failed to cache scan result in Redis", slog.String("scan_id", scanID), slog.String("tenant_id", tenantID), slog.Any("error", err))
 		}
 	}
 
@@ -57,7 +74,7 @@ func publishAsyncResult(webhookURL string, s *clamd.ScanResult, scanID string, f
 			return
 		}
 		defer resp.Body.Close()
-		slog.Info("Successfully sent result to webhook", slog.String("webhook_url", webhookURL), slog.Int("status_code", resp.StatusCode))
+		slog.Info("Successfully sent result to webhook", slog.String("webhook_url", webhookURL), slog.String("tenant_id", tenantID), slog.Int("status_code", resp.StatusCode))
 	}()
 }
 
@@ -80,9 +97,14 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	if req.URL == "" || req.WebhookURL == "" {
-		writeJSONError(w, "URL and webhook_url are required", http.StatusBadRequest)
+	if req.URL == "" {
+		writeJSONError(w, "URL is required", http.StatusBadRequest)
 		return
+	}
+
+	tenantID, ok := r.Context().Value(TenantContextKey).(string)
+	if !ok || tenantID == "" {
+		tenantID = "default"
 	}
 
 	scanID := uuid.New().String()
@@ -104,14 +126,14 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		resp, err := SafeHTTPClient().Get(req.URL)
 		if err != nil {
 			slog.Error("Failed to fetch URL", slog.String("scan_id", scanID), slog.String("url", req.URL), slog.Any("error", err))
-			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to fetch URL: %v", err)}, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to fetch URL: %v", err)}, scanID, req.URL, tenantID)
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			slog.Error("URL returned non-200 status", slog.String("scan_id", scanID), slog.String("url", req.URL), slog.Int("status_code", resp.StatusCode))
-			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode)}, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("URL returned non-200 status: %d", resp.StatusCode)}, scanID, req.URL, tenantID)
 			return
 		}
 
@@ -126,19 +148,20 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		clamdResponse, err := c.ScanStream(limitedBody, abort)
 		if err != nil {
 			slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
-			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, req.URL, tenantID)
 			return
 		}
 		
 		for s := range clamdResponse {
 			slog.Info("Finished scanning URL", 
 				slog.String("scan_id", scanID), 
+				slog.String("tenant_id", tenantID), 
 				slog.String("url", req.URL), 
 				slog.String("result", formatStatus(s.Status)), 
 				slog.String("description", s.Description),
 				slog.Duration("duration_ms", time.Since(start)),
 			)
-			publishAsyncResult(req.WebhookURL, s, scanID, req.URL)
+			publishAsyncResult(req.WebhookURL, s, scanID, req.URL, tenantID)
 		}
 	}()
 }
@@ -177,9 +200,15 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
+	tenantID, ok := r.Context().Value(TenantContextKey).(string)
+	if !ok || tenantID == "" {
+		tenantID = "default"
+	}
+	
 	// Create a temp file to hold the upload so we can return HTTP 202 immediately and free the connection
 	tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "clamav-async-upload-*")
 	if err != nil {
+		slog.Error("Failed to create temp file", slog.Any("error", err))
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -188,6 +217,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	file.Close()
 	if err != nil {
 		os.Remove(tempFile.Name())
+		slog.Error("Failed to copy to temp file", slog.Any("error", err))
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -209,7 +239,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		f, err := os.Open(filename)
 		if err != nil {
 			slog.Error("Failed to open temp file", slog.String("scan_id", scanID), slog.Any("error", err))
-			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Failed to read uploaded file"}, scanID, originalName)
+			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Failed to read uploaded file"}, scanID, originalName, tenantID)
 			return
 		}
 		defer f.Close()
@@ -291,12 +321,13 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 
 		slog.Info("Finished scanning", 
 			slog.String("scan_id", scanID), 
+			slog.String("tenant_id", tenantID), 
 			slog.String("filename", originalName), 
 			slog.String("result", formatStatus(aggregatedResult.Status)), 
 			slog.String("description", aggregatedResult.Description),
 			slog.Duration("duration_ms", time.Since(start)),
 		)
-		publishAsyncResult(webhookURL, aggregatedResult, scanID, originalName)
+		publishAsyncResult(webhookURL, aggregatedResult, scanID, originalName, tenantID)
 		
 		if aggregatedResult.Status == clamd.RES_FOUND {
 				quarantineBucket := opts["AWS_S3_QUARANTINE_BUCKET"]
@@ -311,16 +342,18 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 							}
 						})
 						f.Seek(0, 0)
-						key := scanID + "-" + originalName
+						// Partition Quarantine by Tenant ID and Date
+						dateStr := time.Now().Format("2006/01/02")
+						key := tenantID + "/" + dateStr + "/" + scanID + "-" + originalName
 						_, err = s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 							Bucket: aws.String(quarantineBucket),
 							Key:    aws.String(key),
 							Body:   f,
 						})
 						if err != nil {
-							slog.Error("Failed to upload to quarantine bucket", slog.String("bucket", quarantineBucket), slog.String("key", key), slog.Any("error", err))
+							slog.Error("Failed to upload to quarantine bucket", slog.String("bucket", quarantineBucket), slog.String("key", key), slog.String("tenant_id", tenantID), slog.Any("error", err))
 						} else {
-							slog.Info("Successfully uploaded infected file to quarantine bucket", slog.String("bucket", quarantineBucket), slog.String("key", key))
+							slog.Info("Successfully uploaded infected file to quarantine bucket", slog.String("bucket", quarantineBucket), slog.String("key", key), slog.String("tenant_id", tenantID))
 						}
 					}
 				}
@@ -339,12 +372,17 @@ func handleAsyncPolling(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	val, err := redisClient.Get(r.Context(), scanID).Result()
+	tenantID, ok := r.Context().Value(TenantContextKey).(string)
+	if !ok || tenantID == "" {
+		tenantID = "default"
+	}
+
+	val, err := redisClient.Get(r.Context(), "tenant:"+tenantID+":scan:"+scanID).Result()
 	if err == redis.Nil {
 		writeJSONError(w, "Scan not found or still processing", http.StatusNotFound)
 		return
 	} else if err != nil {
-		slog.Error("Failed to get scan result from Redis", slog.String("scan_id", scanID), slog.Any("error", err))
+		slog.Error("Failed to get scan result from Redis", slog.String("scan_id", scanID), slog.String("tenant_id", tenantID), slog.Any("error", err))
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

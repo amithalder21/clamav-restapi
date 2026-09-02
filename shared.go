@@ -16,6 +16,10 @@ import (
 	"github.com/dutchcoders/go-clamd"
 )
 
+type contextKey string
+
+const TenantContextKey contextKey = "tenant_id"
+
 // writeJSONError writes a standard JSON error response
 func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

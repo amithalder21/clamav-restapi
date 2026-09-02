@@ -88,7 +88,17 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		clientID, _ := claims["client_id"].(string)
+		if clientID == "" {
+			clientID, _ = claims["aud"].(string)
+		}
+		if clientID == "" {
+			writeJSONError(w, "Unauthorized (missing client_id or aud claim)", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), TenantContextKey, clientID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
 
@@ -148,6 +158,16 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		clientID, _ := claims["client_id"].(string)
+		if clientID == "" {
+			clientID, _ = claims["aud"].(string)
+		}
+		if clientID == "" {
+			writeJSONError(w, "Forbidden (missing client_id or aud claim)", http.StatusForbidden)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), TenantContextKey, clientID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }

@@ -63,7 +63,7 @@ services:
       - MAX_FILE_SIZE=100M
       - MAX_RECURSION=16
       - MAX_FILES=10000
-      - ASYNC_TEMP_DIR=/scans
+      - ASYNC_TEMP_DIR=/tmp
 
       # --- Auth ---
 
