@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-HOST="http://clamav-api.polestar-testing.com"
+HOST="http://clamav-api.example.com"
 COGNITO_URL="https://test-clamav-rest-api.auth.us-east-1.amazoncognito.com/oauth2/token"
 
 SCAN_CLIENT_ID="47csli4is2590iumqf9hobh3kj"
