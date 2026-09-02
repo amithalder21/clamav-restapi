@@ -101,6 +101,10 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "URL is required", http.StatusBadRequest)
 		return
 	}
+	
+	if req.WebhookURL == "" {
+		req.WebhookURL = opts["APP_WEBHOOK_URL"]
+	}
 
 	tenantID, ok := r.Context().Value(TenantContextKey).(string)
 	if !ok || tenantID == "" {
@@ -194,6 +198,9 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	webhookURL := r.FormValue("webhook_url")
+	if webhookURL == "" {
+		webhookURL = opts["APP_WEBHOOK_URL"]
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeJSONError(w, "Missing 'file' field", http.StatusBadRequest)
