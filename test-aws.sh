@@ -5,10 +5,10 @@ HOST="http://clamav-api.polestar-testing.com"
 COGNITO_URL="https://test-clamav-rest-api.auth.us-east-1.amazoncognito.com/oauth2/token"
 
 SCAN_CLIENT_ID="47csli4is2590iumqf9hobh3kj"
-SCAN_CLIENT_SECRET="***REMOVED_SCAN_SECRET***"
+SCAN_CLIENT_SECRET="<YOUR_SCAN_SECRET>"
 
 ADMIN_CLIENT_ID="3svl567u5jhgmrgrgcu4n7krfg"
-ADMIN_CLIENT_SECRET="***REMOVED_ADMIN_SECRET***"
+ADMIN_CLIENT_SECRET="<YOUR_ADMIN_SECRET>"
 
 # Helper for colored output
 green() { printf "\033[32m%s\033[0m\n" "$1"; }
