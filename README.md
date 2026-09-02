@@ -24,8 +24,10 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Advanced Malware & PDF Detection**: Pre-configured with third-party Sanesecurity signatures natively baked into the Docker image. Curated to aggressively block malicious macros, phishing payloads, and zero-day JavaScript embedded within PDFs—closing the gaps in standard ClamAV databases.
 - **Enterprise Audit Logging**: Full support for native structured JSON logs (`log/slog`), directly indexing `scan_id`, `duration_ms`, `result`, and `client_id` instantly into CloudWatch for security dashboards.
 - **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files, strict HTTP body size limits (`MaxBytesReader`) to prevent memory/disk exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
-- **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks.
-- **Cloud URL Scanning**: Stream files directly from remote URLs to ClamAV without buffering in memory.
+- **SaaS Multi-Tenancy & Data Isolation**: Securely supports multi-tenant operations (e.g., Polestar's PurpleTrac/DocIntel) via Cognito JWT `client_id` extraction, strictly partitioning Redis/Dragonfly caching keys and S3 Quarantine routes per tenant.
+- **Concurrent Multi-Engine Scanning**: Analyzes files simultaneously across ClamAV, YARA (Behavioral), and Linux Malware Detect (Maldet) in separate Go routines, vastly improving zero-day and web-shell detection without a 3x time penalty.
+- **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks (with dynamic tenant-based webhook routing).
+- **Cloud URL Scanning**: Stream files directly from remote URLs to the engines without buffering in memory.
 - **JWT Authentication**: Secure the API using AWS Cognito (or any OIDC provider) by validating Bearer tokens against a remote JWKS.
 - **Admin API**: Secured endpoints to check daemon health, Go runtime metrics, and manually reload the virus database.
 
@@ -87,10 +89,10 @@ sequenceDiagram
         EventBridge->>ClamAV: POST /api/v1/events/s3 (S3 JSON Event)
         ClamAV-->>EventBridge: HTTP 202 Accepted
         ClamAV->>S3: Streams S3 Object (s3:GetObject)
-        ClamAV->>ClamAV: Analyzes File
+        ClamAV->>ClamAV: Analyzes File (ClamAV, YARA, Maldet)
         ClamAV->>S3: Merges & Applies Tags (s3:PutObjectTagging)
         alt If INFECTED & AWS_S3_QUARANTINE_BUCKET is set
-            ClamAV->>QuarantineS3: CopyObject (moves file & tags to quarantine)
+            ClamAV->>QuarantineS3: CopyObject (moves file & tags to quarantine: /<tenant_id>/...)
             ClamAV->>S3: DeleteObject (removes original file)
         else If INFECTED & AWS_S3_DELETE_INFECTED=true
             ClamAV->>S3: DeleteObject (removes infected file)
