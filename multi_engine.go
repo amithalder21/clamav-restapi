@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,9 +10,24 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dutchcoders/go-clamd"
 )
+
+// engineTimeout bounds how long a single YARA or Maldet invocation may run.
+// Without this, a crafted input that makes either engine hang (e.g. pathological
+// regex backtracking in YARA, deep archive recursion in Maldet) blocks the scan
+// goroutine - and for synchronous endpoints, the client connection - forever.
+func engineTimeout() time.Duration {
+	if v := opts["SCAN_ENGINE_TIMEOUT_SECONDS"]; v != "" {
+		var secs int
+		if _, err := fmt.Sscanf(v, "%d", &secs); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 5 * time.Minute
+}
 
 // EngineResult holds the output from a scanning engine
 type EngineResult struct {
@@ -29,9 +46,16 @@ func RunYaraScan(filePath string, originalFilename string) EngineResult {
 	baseName := filepath.Base(originalFilename)
 	extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(baseName)), ".")
 
+	result := EngineResult{
+		Engine: "YARA",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout())
+	defer cancel()
+
 	// Execute YARA with the rules directory
 	// #nosec G204
-	cmd := exec.Command("yara",
+	cmd := exec.CommandContext(ctx, "yara",
 		"-d", "filename="+baseName,
 		"-d", "filepath="+originalFilename,
 		"-d", "extension="+extension,
@@ -39,16 +63,21 @@ func RunYaraScan(filePath string, originalFilename string) EngineResult {
 		"-d", "filetype=",
 		"/var/lib/yara_rules/index.yar", filePath)
 	output, err := cmd.CombinedOutput()
-	
-	result := EngineResult{
-		Engine: "YARA",
+
+	if ctx.Err() == context.DeadlineExceeded {
+		slog.Error("YARA scan timed out", slog.String("file", filePath), slog.Duration("timeout", engineTimeout()))
+		result.Error = ctx.Err()
+		return result
 	}
 
 	if err != nil {
-		// YARA exits with code 1 if it finds no matches, but combinedOutput will return an error if exit code != 0
-		// Wait, YARA exits with 0 on success, 1 on error (syntax etc). 
-		// Actually yara returns 0 on both matches and no matches unless there's an error.
-		slog.Error("YARA execution error or match issue", slog.Any("error", err), slog.String("output", string(output)))
+		// YARA exits 0 on both matches and no matches; a non-zero exit always
+		// means a genuine problem (missing/broken rules file, binary missing,
+		// bad arguments) - not "no threats found". Treat it as an engine
+		// failure rather than silently reporting clean.
+		slog.Error("YARA execution error", slog.Any("error", err), slog.String("output", string(output)))
+		result.Error = err
+		return result
 	}
 
 	outStr := strings.TrimSpace(string(output))
@@ -73,26 +102,42 @@ func RunYaraScan(filePath string, originalFilename string) EngineResult {
 }
 
 func RunMaldetScan(filePath string) EngineResult {
+	result := EngineResult{
+		Engine: "Maldet",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout())
+	defer cancel()
+
 	// Maldet's default config has scan_ignore_root=1 ("LMD typically only scans
 	// user space paths... it makes sense to ignore files that are root owned").
 	// This app always runs as root and every staged file it writes is therefore
 	// root-owned, so without this override Maldet silently reports 0 hits on
 	// every scan regardless of content.
 	// #nosec G204
-	cmd := exec.Command("maldet", "-co", "scan_ignore_root=0", "-a", filePath)
+	cmd := exec.CommandContext(ctx, "maldet", "-co", "scan_ignore_root=0", "-a", filePath)
 	output, err := cmd.CombinedOutput()
-	
-	result := EngineResult{
-		Engine: "Maldet",
+	outStr := string(output)
+
+	if ctx.Err() == context.DeadlineExceeded {
+		slog.Error("Maldet scan timed out", slog.String("file", filePath), slog.Duration("timeout", engineTimeout()))
+		result.Error = ctx.Err()
+		return result
 	}
 
 	if err != nil {
-		slog.Error("Maldet execution error", slog.Any("error", err), slog.String("output", string(output)))
-		// Maldet might return non-zero if hits are found, we need to check output anyway
+		var execErr *exec.Error
+		if errors.As(err, &execErr) || strings.TrimSpace(outStr) == "" {
+			// maldet couldn't even run (binary missing/not executable) or produced
+			// no output at all - a genuine engine failure, distinct from the
+			// non-zero exit code Maldet is known to return when hits are found.
+			slog.Error("Maldet execution error", slog.Any("error", err), slog.String("output", outStr))
+			result.Error = err
+			return result
+		}
+		slog.Warn("Maldet exited non-zero; parsing output anyway (may indicate hits)", slog.Any("error", err))
 	}
 
-	outStr := string(output)
-	
 	// Maldet outputs a summary report. We can parse for "malware hits"
 	if strings.Contains(outStr, "malware hits 1") || strings.Contains(outStr, "malware hits") && !strings.Contains(outStr, "malware hits 0") {
 		result.IsInfected = true
@@ -150,6 +195,7 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	// Aggregate results
 	finalStatus := clamd.RES_OK
 	var descriptions []string
+	var warnings []string
 
 	if clamResult != nil {
 		if clamResult.Status == clamd.RES_FOUND {
@@ -158,12 +204,16 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 		}
 	}
 
-	if yaraResult.IsInfected {
+	if yaraResult.Error != nil {
+		warnings = append(warnings, "YARA")
+	} else if yaraResult.IsInfected {
 		finalStatus = clamd.RES_FOUND
 		descriptions = append(descriptions, "YARA:" + yaraResult.Signature)
 	}
 
-	if maldetResult.IsInfected {
+	if maldetResult.Error != nil {
+		warnings = append(warnings, "Maldet")
+	} else if maldetResult.IsInfected {
 		finalStatus = clamd.RES_FOUND
 		descriptions = append(descriptions, "Maldet:" + maldetResult.Signature)
 	}
@@ -177,6 +227,17 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	} else if clamResult != nil && clamResult.Status == clamd.RES_PARSE_ERROR {
 		finalStatus = clamd.RES_PARSE_ERROR
 		finalDescription = "Parse Error"
+	}
+
+	// Surface engine failures instead of silently reporting a complete result
+	// when one or more engines never actually ran (binary missing, crashed, or
+	// timed out) - without this, a file could come back CLEAN having only
+	// actually been checked by ClamAV, with YARA/Maldet coverage silently lost.
+	if len(warnings) > 0 {
+		finalDescription += " | WARNING: " + strings.Join(warnings, ",") + " engine(s) did not complete - scan coverage reduced"
+		slog.Error("Multi-engine scan degraded: one or more engines failed",
+			slog.String("failed_engines", strings.Join(warnings, ",")),
+			slog.String("file", filePath))
 	}
 
 	aggregatedResult := &clamd.ScanResult{

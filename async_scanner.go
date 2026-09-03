@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -145,26 +146,44 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		limitedBody := http.MaxBytesReader(nil, resp.Body, maxFileSizeBytes+1024*1024)
 
-		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-		var abort chan bool
-		clamdResponse, err := c.ScanStream(limitedBody, abort)
+		// Stage to disk so YARA/Maldet (which need a file path, not a stream) also
+		// run on this endpoint - previously this handler only ever ran ClamAV,
+		// silently skipping YARA/Maldet coverage for async URL scans.
+		tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "async-url-*")
 		if err != nil {
-			slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
+			slog.Error("Failed to create temp file for URL scan", slog.String("scan_id", scanID), slog.Any("error", err))
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Internal server error"}, scanID, req.URL, tenantID)
+			return
+		}
+		tempFilePath := tempFile.Name()
+		defer os.Remove(tempFilePath)
+
+		_, err = io.Copy(tempFile, limitedBody)
+		if err != nil {
+			tempFile.Close()
+			slog.Error("Failed to save URL stream to temp file", slog.String("scan_id", scanID), slog.Any("error", err))
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to read URL stream: %v", err)}, scanID, req.URL, tenantID)
+			return
+		}
+
+		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
+		aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, req.URL, c)
+		tempFile.Close()
+		if err != nil {
+			slog.Error("RunMultiEngineScan error", slog.String("scan_id", scanID), slog.Any("error", err))
 			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}, scanID, req.URL, tenantID)
 			return
 		}
-		
-		for s := range clamdResponse {
-			slog.Info("Finished scanning URL", 
-				slog.String("scan_id", scanID), 
-				slog.String("tenant_id", tenantID), 
-				slog.String("url", req.URL), 
-				slog.String("result", formatStatus(s.Status)), 
-				slog.String("description", s.Description),
-				slog.Duration("duration_ms", time.Since(start)),
-			)
-			publishAsyncResult(req.WebhookURL, s, scanID, req.URL, tenantID)
-		}
+
+		slog.Info("Finished scanning URL",
+			slog.String("scan_id", scanID),
+			slog.String("tenant_id", tenantID),
+			slog.String("url", req.URL),
+			slog.String("result", formatStatus(aggregatedResult.Status)),
+			slog.String("description", aggregatedResult.Description),
+			slog.Duration("duration_ms", time.Since(start)),
+		)
+		publishAsyncResult(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID)
 	}()
 }
 
@@ -286,7 +305,11 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 						f.Seek(0, 0)
 						// Partition Quarantine by Tenant ID and Date
 						dateStr := time.Now().Format("2006/01/02")
-						key := tenantID + "/" + dateStr + "/" + scanID + "-" + originalName
+						// originalName is the caller-supplied multipart filename - sanitize
+						// with filepath.Base so a crafted name (e.g. containing "../") can't
+						// escape the tenant/date-scoped key prefix used for isolation.
+						safeName := filepath.Base(originalName)
+						key := tenantID + "/" + dateStr + "/" + scanID + "-" + safeName
 						_, err = s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 							Bucket: aws.String(quarantineBucket),
 							Key:    aws.String(key),

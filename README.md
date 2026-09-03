@@ -23,9 +23,9 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Advanced S3 Security**: Automatically streams files from S3 without saving to disk, non-destructively merges existing tags with virus results, actively deletes infected files, and alerts security teams via AWS SNS.
 - **Advanced Malware & PDF Detection**: Pre-configured with dynamic YARA heuristics and Linux Malware Detect (Maldet) signatures natively downloaded into the Docker image. Curated to aggressively block malicious macros, phishing payloads, zero-day JavaScript embedded within PDFs, and modern web shells—closing the gaps in standard ClamAV databases without massive memory overhead.
 - **Enterprise Audit Logging**: Full support for native structured JSON logs (`log/slog`), directly indexing `scan_id`, `duration_ms`, `result`, and `client_id` instantly into CloudWatch for security dashboards.
-- **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files, strict HTTP body size limits (`MaxBytesReader`) to prevent memory/disk exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
+- **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files and on tenant-scoped S3 quarantine keys, strict HTTP body size limits (`MaxBytesReader`) plus bounded scan-engine and HTTP request/response timeouts to prevent memory/disk/connection exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
 - **SaaS Multi-Tenancy & Data Isolation**: Securely supports multi-tenant operations (e.g., multiple enterprise applications) via Cognito JWT `client_id` extraction, strictly partitioning Redis/Dragonfly caching keys and S3 Quarantine routes per tenant.
-- **Concurrent Multi-Engine Scanning**: Analyzes files simultaneously across ClamAV, YARA (Behavioral), and Linux Malware Detect (Maldet) in separate Go routines, vastly improving zero-day and web-shell detection without a 3x time penalty.
+- **Concurrent Multi-Engine Scanning**: Analyzes files simultaneously across ClamAV, YARA (Behavioral), and Linux Malware Detect (Maldet) in separate Go routines, vastly improving zero-day and web-shell detection without a 3x time penalty. Applies to every scanning endpoint, including async URL scans. Each engine runs under a bounded timeout (`SCAN_ENGINE_TIMEOUT_SECONDS`); if YARA or Maldet fails to complete (crash, missing binary, or timeout), the result explicitly flags it (`WARNING: ... engine(s) did not complete - scan coverage reduced`) instead of silently reporting a false all-clear.
 - **Synchronous & Asynchronous Scanning**: Support for standard multipart file uploads as well as stateless async scanning via webhooks (with dynamic tenant-based webhook routing).
 - **Cloud URL Scanning**: Stream files directly from remote URLs to the engines without buffering in memory.
 - **JWT Authentication**: Secure the API using AWS Cognito (or any OIDC provider) by validating Bearer tokens against a remote JWKS.
@@ -78,7 +78,7 @@ sequenceDiagram
         Note over Client, Webhook: 2. Asynchronous File/URL Scan
         Client->>ClamAV: POST /api/v1/async-scan/file or /api/v1/async-scan/url
         ClamAV-->>Client: HTTP 202 Accepted (Scan ID)
-        ClamAV->>ClamAV: Downloads & Analyzes in background
+        ClamAV->>ClamAV: Downloads & Analyzes in background (ClamAV, YARA, Maldet)
         ClamAV->>Webhook: POSTs JSON Result to webhook_url
     end
 
@@ -142,6 +142,7 @@ Below is the complete list of available environment variables that can be used t
 | `AWS_SQS_QUEUE_URL` | Activates the autonomous background SQS consumer for S3 events. |
 | `APP_WEBHOOK_URL` | Fallback centralized webhook URL to hit after an S3 object is scanned or if an async scan provides no tenant-specific URL. |
 | `ASYNC_TEMP_DIR` | The temp directory to use when saving multipart uploads for async scanning (e.g., `/tmp`). |
+| `SCAN_ENGINE_TIMEOUT_SECONDS` | Maximum time (in seconds) a single YARA or Maldet invocation may run before being killed and reported as a failed engine - Default `300` (5 minutes). |
 | `AWS_S3_DELETE_INFECTED` | If `true`, the scanner will actively delete infected files from S3. |
 | `AWS_S3_QUARANTINE_BUCKET`| If set to a bucket name, infected files will be copied here and deleted from the source bucket. |
 | `AWS_SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
@@ -189,6 +190,7 @@ docker run -d \
   -e AWS_SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/123/my-queue" \
   -e APP_WEBHOOK_URL="https://webhook.site/your-id" \
   -e ASYNC_TEMP_DIR="/tmp" \
+  -e SCAN_ENGINE_TIMEOUT_SECONDS="300" \
   -e AWS_S3_DELETE_INFECTED="false" \
   -e AWS_S3_QUARANTINE_BUCKET="my-quarantine-bucket" \
   -e AWS_SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123:my-topic" \
@@ -480,6 +482,8 @@ The API strictly adheres to the following HTTP status codes for all scan endpoin
 - `406` - INFECTED
 - `412` - Unable to parse the file
 - `501` - Unknown request
+
+> **Note on degraded scans:** if YARA or Maldet fails to complete for a given scan (crash, missing binary, or exceeding `SCAN_ENGINE_TIMEOUT_SECONDS`), the HTTP status code still reflects the engines that *did* complete, but the `av-signature` field is appended with `WARNING: <Engine> engine(s) did not complete - scan coverage reduced` so callers can detect and act on reduced detection coverage rather than trusting a false all-clear.
 
 ---
 

@@ -215,9 +215,30 @@ func main() {
 	http.HandleFunc("/api/v1/health", home)
 	http.HandleFunc("/", home)
 
+	// Explicit timeouts: without these, the default http.Server has none, so a
+	// single crafted upload that makes a scan engine hang (see engineTimeout in
+	// multi_engine.go) can also tie up the client connection/server goroutine
+	// indefinitely on top of it. ReadTimeout/WriteTimeout are generous to allow
+	// large legitimate uploads on slow links plus the full scan lifecycle;
+	// ReadHeaderTimeout specifically bounds slow-header (slowloris-style) requests.
+	httpsServer := &http.Server{
+		Addr:              SSL_PORT,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Minute,
+		WriteTimeout:      10 * time.Minute,
+		IdleTimeout:       120 * time.Second,
+	}
+	httpServer := &http.Server{
+		Addr:              PORT,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Minute,
+		WriteTimeout:      10 * time.Minute,
+		IdleTimeout:       120 * time.Second,
+	}
+
 	// Start the HTTPS server in a goroutine
-	go http.ListenAndServeTLS(SSL_PORT, "/etc/ssl/clamav-rest/server.crt", "/etc/ssl/clamav-rest/server.key", nil)
+	go httpsServer.ListenAndServeTLS("/etc/ssl/clamav-rest/server.crt", "/etc/ssl/clamav-rest/server.key")
 
 	// Start the HTTP server
-	http.ListenAndServe(PORT, nil)
+	httpServer.ListenAndServe()
 }
