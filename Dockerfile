@@ -1,5 +1,5 @@
 # Builder stage
-FROM golang:alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -14,7 +14,7 @@ FROM rockylinux:9
 RUN dnf -y upgrade --refresh \
     && dnf install -y epel-release \
     && dnf install -y clamav-server clamav-data clamav-update clamav-filesystem clamav clamav-scanner-systemd clamav-lib \
-       yara wget tar gzip inotify-tools perl \
+       yara wget tar gzip inotify-tools perl git \
     && mkdir -p /run/clamav \
     && (chown clamupdate:clamupdate /run/clamav 2>/dev/null || chown clamscan:clamscan /run/clamav) \
     && cd /tmp \
@@ -41,25 +41,22 @@ RUN sed -i 's/^Example$/# Example/g' /etc/clamd.d/scan.conf 2>/dev/null || true 
 # If scan.conf doesn't exist (sometimes the package puts it in /etc/clamd.conf in rockylinux)
 RUN [ -f /etc/clamd.conf ] && sed -i 's/^Example$/# Example/g' /etc/clamd.conf || true \
     && [ -f /etc/clamd.conf ] && sed -i 's/^#Foreground .*$/Foreground true/g' /etc/clamd.conf || true \
-    && [ -f /etc/clamd.conf ] && sed -i 's/^#TCPSocket .*$/TCPSocket 3310/g' /etc/clamd.conf || true \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/malwarehash.hsb' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/foxhole_generic.cdb' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/foxhole_js.cdb' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/phish.ndb' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/scam.ndb' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/rogue.hdb' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/badmacro.ndb' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/sigwhitelist.ign2' >> /etc/freshclam.conf \
-    && echo 'DatabaseCustomURL https://mirror.rollernet.us/sanesecurity/sanesecurity.ftm' >> /etc/freshclam.conf
+    && [ -f /etc/clamd.conf ] && sed -i 's/^#TCPSocket .*$/TCPSocket 3310/g' /etc/clamd.conf || true
+
 
 RUN freshclam --quiet --no-dns
 
 # Copy binary, certs, and YARA rules
 COPY --from=builder /src/clamav-rest /usr/bin/
 COPY ssl/server.* /etc/ssl/clamav-rest/
-COPY yara_rules/ /var/lib/yara_rules/
+RUN mkdir -p /var/lib/yara_rules && \
+    git clone https://github.com/amithalder21/signature-base.git /var/lib/yara_rules/signature-base && \
+    cd /var/lib/yara_rules && \
+    find ./signature-base/yara -type f \( -name "*.yar" -o -name "*.yara" \) -exec echo "include \"{}\"" \; > index.yar
+
 COPY entrypoint.sh /usr/bin/
-RUN chmod +x /usr/bin/entrypoint.sh
+COPY update_signatures.sh /usr/bin/
+RUN chmod +x /usr/bin/entrypoint.sh /usr/bin/update_signatures.sh
 
 EXPOSE 9000
 EXPOSE 9443

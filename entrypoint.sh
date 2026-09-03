@@ -15,10 +15,14 @@ sed -i 's/^#MaxPartitions .*$/MaxPartitions '"$MAX_PARTITIONS"'/g' /etc/clamav/c
 sed -i 's/^#MaxIconsPE .*$/MaxIconsPE '"$MAX_ICONSPE"'/g' /etc/clamav/clamd.conf
 sed -i 's/^#PCREMatchLimit.*$/PCREMatchLimit '"$PCRE_MATCHLIMIT"'/g' /etc/clamav/clamd.conf
 sed -i 's/^#PCRERecMatchLimit .*$/PCRERecMatchLimit '"$PCRE_RECMATCHLIMIT"'/g' /etc/clamav/clamd.conf
+sed -i 's/^#ConcurrentDatabaseReload yes/ConcurrentDatabaseReload no/g' /etc/clamav/clamd.conf
 
 freshclam --daemon --checks=$SIGNATURE_CHECKS &
 clamd &
 /usr/bin/clamav-rest &
+
+# Start the YARA/Maldet signature updater loop in the background (every 12 hours)
+(while true; do sleep 43200; /usr/bin/update_signatures.sh; done) &
 
 pids=`jobs -p`
 

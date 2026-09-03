@@ -1,0 +1,47 @@
+#!/bin/bash
+# clamtrac - Unified CLI for ClamTrac Operations
+set -eo pipefail
+
+usage() {
+    echo "Usage: ./clamtrac <command>"
+    echo ""
+    echo "Commands:"
+    echo "  test e2e       Run the multi-tenant E2E integration tests"
+    echo "  test api       Run the comprehensive API endpoint tests"
+    echo "  test sqs       Run the AWS SQS polling integration tests"
+    echo "  docker up      Start the local Docker Compose stack in the background"
+    echo "  docker down    Tear down the local Docker Compose stack"
+    echo "  docker restart Restart the local Docker Compose stack"
+    echo "  docker logs    Tail the logs of the Docker Compose stack"
+    echo "  help           Show this help message"
+}
+
+if [ $# -eq 0 ]; then
+    usage
+    exit 1
+fi
+
+COMMAND="$1"
+SUBCOMMAND="${2:-}"
+
+case "$COMMAND" in
+    test)
+        case "$SUBCOMMAND" in
+            e2e) bash ./tests/test-multi-tenant.sh ;;
+            api) bash ./tests/test-endpoints.sh ;;
+            sqs) bash ./tests/test-aws.sh ;;
+            *) echo "Unknown test subcommand: $SUBCOMMAND"; usage; exit 1 ;;
+        esac
+        ;;
+    docker)
+        case "$SUBCOMMAND" in
+            up) docker compose -f docker-compose.local.yml up -d ;;
+            down) docker compose -f docker-compose.local.yml down ;;
+            restart) docker compose -f docker-compose.local.yml down && docker compose -f docker-compose.local.yml up -d ;;
+            logs) docker compose -f docker-compose.local.yml logs -f ;;
+            *) echo "Unknown docker subcommand: $SUBCOMMAND"; usage; exit 1 ;;
+        esac
+        ;;
+    help) usage ;;
+    *) echo "Unknown command: $COMMAND"; usage; exit 1 ;;
+esac
