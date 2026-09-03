@@ -1,21 +1,25 @@
 #!/bin/sh
 
+CONF_FILE="/etc/clamd.d/scan.conf"
+[ -f /etc/clamd.conf ] && CONF_FILE="/etc/clamd.conf"
+[ -f /etc/clamav/clamd.conf ] && CONF_FILE="/etc/clamav/clamd.conf"
+
 # Replace values with environment variables in clamd.conf
-sed -i 's/^#MaxScanSize .*$/MaxScanSize '"$MAX_SCAN_SIZE"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#StreamMaxLength .*$/StreamMaxLength '"$MAX_FILE_SIZE"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxFileSize .*$/MaxFileSize '"$MAX_FILE_SIZE"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxRecursion .*$/MaxRecursion '"$MAX_RECURSION"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxFiles .*$/MaxFiles '"$MAX_FILES"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxEmbeddedPE .*$/MaxEmbeddedPE '"$MAX_EMBEDDEDPE"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxHTMLNormalize .*$/MaxHTMLNormalize '"$MAX_HTMLNORMALIZE"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxHTMLNoTags.*$/MaxHTMLNoTags '"$MAX_HTMLNOTAGS"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxScriptNormalize .*$/MaxScriptNormalize '"$MAX_SCRIPTNORMALIZE"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxZipTypeRcg .*$/MaxZipTypeRcg '"$MAX_ZIPTYPERCG"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxPartitions .*$/MaxPartitions '"$MAX_PARTITIONS"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#MaxIconsPE .*$/MaxIconsPE '"$MAX_ICONSPE"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#PCREMatchLimit.*$/PCREMatchLimit '"$PCRE_MATCHLIMIT"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#PCRERecMatchLimit .*$/PCRERecMatchLimit '"$PCRE_RECMATCHLIMIT"'/g' /etc/clamav/clamd.conf
-sed -i 's/^#ConcurrentDatabaseReload yes/ConcurrentDatabaseReload no/g' /etc/clamav/clamd.conf
+sed -i 's/^#MaxScanSize .*$/MaxScanSize '"$MAX_SCAN_SIZE"'/g' "$CONF_FILE"
+sed -i 's/^#StreamMaxLength .*$/StreamMaxLength '"$MAX_FILE_SIZE"'/g' "$CONF_FILE"
+sed -i 's/^#MaxFileSize .*$/MaxFileSize '"$MAX_FILE_SIZE"'/g' "$CONF_FILE"
+sed -i 's/^#MaxRecursion .*$/MaxRecursion '"$MAX_RECURSION"'/g' "$CONF_FILE"
+sed -i 's/^#MaxFiles .*$/MaxFiles '"$MAX_FILES"'/g' "$CONF_FILE"
+sed -i 's/^#MaxEmbeddedPE .*$/MaxEmbeddedPE '"$MAX_EMBEDDEDPE"'/g' "$CONF_FILE"
+sed -i 's/^#MaxHTMLNormalize .*$/MaxHTMLNormalize '"$MAX_HTMLNORMALIZE"'/g' "$CONF_FILE"
+sed -i 's/^#MaxHTMLNoTags.*$/MaxHTMLNoTags '"$MAX_HTMLNOTAGS"'/g' "$CONF_FILE"
+sed -i 's/^#MaxScriptNormalize .*$/MaxScriptNormalize '"$MAX_SCRIPTNORMALIZE"'/g' "$CONF_FILE"
+sed -i 's/^#MaxZipTypeRcg .*$/MaxZipTypeRcg '"$MAX_ZIPTYPERCG"'/g' "$CONF_FILE"
+sed -i 's/^#MaxPartitions .*$/MaxPartitions '"$MAX_PARTITIONS"'/g' "$CONF_FILE"
+sed -i 's/^#MaxIconsPE .*$/MaxIconsPE '"$MAX_ICONSPE"'/g' "$CONF_FILE"
+sed -i 's/^#PCREMatchLimit.*$/PCREMatchLimit '"$PCRE_MATCHLIMIT"'/g' "$CONF_FILE"
+sed -i 's/^#PCRERecMatchLimit .*$/PCRERecMatchLimit '"$PCRE_RECMATCHLIMIT"'/g' "$CONF_FILE"
+sed -i 's/^#ConcurrentDatabaseReload yes/ConcurrentDatabaseReload no/g' "$CONF_FILE"
 
 freshclam --daemon --checks=$SIGNATURE_CHECKS &
 clamd &
