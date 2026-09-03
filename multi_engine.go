@@ -17,7 +17,7 @@ type EngineResult struct {
 func RunYaraScan(filePath string) EngineResult {
 	// Execute YARA with the rules directory
 	// #nosec G204
-	cmd := exec.Command("yara", "-d", "filename=", "-d", "filepath=", "-d", "extension=", "-d", "owner=", "/var/lib/yara_rules/index.yar", filePath)
+	cmd := exec.Command("yara", "-d", "filename=", "-d", "filepath=", "-d", "extension=", "-d", "owner=", "-d", "filetype=", "/var/lib/yara_rules/index.yar", filePath)
 	output, err := cmd.CombinedOutput()
 	
 	result := EngineResult{
