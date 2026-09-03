@@ -80,37 +80,56 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			slog.Info("Started scanning file", slog.String("filename", part.FileName()))
 			interceptReader := &ErrorInterceptingReader{Reader: part}
-			var abort chan bool
-			response, err := c.ScanStream(interceptReader, abort)
+			
+			tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "sync-scan-*")
+			if err != nil {
+				slog.Error("Failed to create temp file", slog.Any("error", err))
+				writeJSONError(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			tempFilePath := tempFile.Name()
+			defer os.Remove(tempFilePath)
+			
+			_, err = io.Copy(tempFile, interceptReader)
 			if err != nil {
 				if interceptReader.Err != nil && checkMaxBytesError(w, interceptReader.Err) {
+					tempFile.Close()
 					return
 				}
-				slog.Error("ScanStream error", slog.Any("error", err))
+				slog.Error("Failed to save temp file", slog.Any("error", err))
+				writeJSONError(w, "Failed to read upload", http.StatusInternalServerError)
+				tempFile.Close()
+				return
+			}
+
+			if interceptReader.Err != nil && checkMaxBytesError(w, interceptReader.Err) {
+				tempFile.Close()
+				return
+			}
+
+			aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, c)
+			tempFile.Close()
+			
+			if err != nil {
+				slog.Error("RunMultiEngineScan error", slog.Any("error", err))
 				writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
 				return
 			}
-			
-			for s := range response {
-				if interceptReader.Err != nil {
-					if checkMaxBytesError(w, interceptReader.Err) {
-						return
-					}
-				}
-				if s.Status == clamd.RES_PARSE_ERROR {
-					// Fallback check if ClamAV's own limit was hit but MaxBytesReader didn't trip (e.g. decompression limit)
-					writeJSONError(w, "Payload Too Large or Parse Error", http.StatusRequestEntityTooLarge)
-					return
-				}
-				slog.Info("Finished scanning file", 
-					slog.String("filename", part.FileName()),
-					slog.String("result", formatStatus(s.Status)),
-					slog.String("description", s.Description),
-					slog.Duration("duration_ms", time.Since(start)),
-				)
-				writeScanResponse(w, s, part.FileName())
-				break
+
+			s := aggregatedResult
+
+			if s.Status == clamd.RES_PARSE_ERROR {
+				writeJSONError(w, "Payload Too Large or Parse Error", http.StatusRequestEntityTooLarge)
+				return
 			}
+			slog.Info("Finished scanning file", 
+				slog.String("filename", part.FileName()),
+				slog.String("result", formatStatus(s.Status)),
+				slog.String("description", s.Description),
+				slog.Duration("duration_ms", time.Since(start)),
+			)
+			writeScanResponse(w, s, part.FileName())
+			break
 			return // Process only the first uploaded file to prevent invalid JSON streaming
 		}
 	default:

@@ -184,10 +184,29 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		limitedBody := http.MaxBytesReader(nil, objResp.Body, maxFileSizeBytes+1024*1024)
 
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-		var abort chan bool
-		clamdResponse, err := c.ScanStream(limitedBody, abort)
+		
+		tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "sqs-scan-*")
 		if err != nil {
-			slog.Error("ScanStream error for S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
+			slog.Error("Failed to create temp file for S3 object", slog.String("scan_id", scanID), slog.Any("error", err))
+			objResp.Body.Close()
+			continue
+		}
+		tempFilePath := tempFile.Name()
+		defer os.Remove(tempFilePath)
+		
+		_, err = io.Copy(tempFile, limitedBody)
+		if err != nil {
+			slog.Error("Failed to save S3 object to temp file", slog.String("scan_id", scanID), slog.Any("error", err))
+			tempFile.Close()
+			objResp.Body.Close()
+			continue
+		}
+
+		aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, c)
+		tempFile.Close()
+
+		if err != nil {
+			slog.Error("RunMultiEngineScan error for S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 			objResp.Body.Close()
 			continue
 		}
@@ -196,19 +215,16 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		var scanSignature string
 		var clamdResult *clamd.ScanResult
 
-		for s := range clamdResponse {
-			clamdResult = s
-			if s.Status == clamd.RES_OK {
-				scanStatus = "CLEAN"
-				scanSignature = "OK"
-			} else {
-				scanStatus = "INFECTED"
-				scanSignature = s.Description
-				if scanSignature == "" {
-					scanSignature = "UNKNOWN-THREAT FOUND"
-				}
+		clamdResult = aggregatedResult
+		if clamdResult.Status == clamd.RES_OK {
+			scanStatus = "CLEAN"
+			scanSignature = "OK"
+		} else {
+			scanStatus = "INFECTED"
+			scanSignature = clamdResult.Description
+			if scanSignature == "" {
+				scanSignature = "UNKNOWN-THREAT FOUND"
 			}
-			break
 		}
 		objResp.Body.Close()
 

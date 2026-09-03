@@ -1,9 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	
+	"github.com/dutchcoders/go-clamd"
 )
 
 // EngineResult holds the output from a scanning engine
@@ -78,4 +83,87 @@ func RunMaldetScan(filePath string) EngineResult {
 	}
 
 	return result
+}
+
+func RunMultiEngineScan(f *os.File, filePath string, c *clamd.Clamd) (*clamd.ScanResult, error) {
+	var abort chan bool
+	var wg sync.WaitGroup
+	wg.Add(3)
+
+	var clamResult *clamd.ScanResult
+	var yaraResult EngineResult
+	var maldetResult EngineResult
+	var clamErr error
+
+	// Worker 1: ClamAV
+	go func() {
+		defer wg.Done()
+		f.Seek(0, 0)
+		clamdResponse, err := c.ScanStream(f, abort)
+		if err != nil {
+			clamErr = err
+			clamResult = &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}
+			return
+		}
+		for s := range clamdResponse {
+			clamResult = s
+		}
+	}()
+
+	// Worker 2: YARA
+	go func() {
+		defer wg.Done()
+		yaraResult = RunYaraScan(filePath)
+	}()
+
+	// Worker 3: Maldet
+	go func() {
+		defer wg.Done()
+		maldetResult = RunMaldetScan(filePath)
+	}()
+
+	wg.Wait()
+
+	if clamErr != nil {
+		return clamResult, clamErr
+	}
+
+	// Aggregate results
+	finalStatus := clamd.RES_OK
+	var descriptions []string
+
+	if clamResult != nil {
+		if clamResult.Status == clamd.RES_FOUND {
+			finalStatus = clamd.RES_FOUND
+			descriptions = append(descriptions, "ClamAV:" + clamResult.Description)
+		}
+	}
+
+	if yaraResult.IsInfected {
+		finalStatus = clamd.RES_FOUND
+		descriptions = append(descriptions, "YARA:" + yaraResult.Signature)
+	}
+
+	if maldetResult.IsInfected {
+		finalStatus = clamd.RES_FOUND
+		descriptions = append(descriptions, "Maldet:" + maldetResult.Signature)
+	}
+
+	finalDescription := "CLEAN"
+	if finalStatus == clamd.RES_FOUND {
+		finalDescription = strings.Join(descriptions, " | ")
+	} else if clamResult != nil && clamResult.Status == clamd.RES_ERROR {
+		finalStatus = clamd.RES_ERROR
+		finalDescription = clamResult.Description
+	} else if clamResult != nil && clamResult.Status == clamd.RES_PARSE_ERROR {
+		finalStatus = clamd.RES_PARSE_ERROR
+		finalDescription = "Parse Error"
+	}
+
+	aggregatedResult := &clamd.ScanResult{
+		Status:      finalStatus,
+		Description: finalDescription,
+	}
+
+	return aggregatedResult, nil
 }

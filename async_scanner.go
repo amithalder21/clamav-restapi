@@ -9,8 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -255,75 +253,12 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-		var abort chan bool
-
-		var wg sync.WaitGroup
-		wg.Add(3)
-
-		var clamResult *clamd.ScanResult
-		var yaraResult EngineResult
-		var maldetResult EngineResult
-
-		// Worker 1: ClamAV (TCP Stream)
-		go func() {
-			defer wg.Done()
-			clamdResponse, err := c.ScanStream(f, abort)
-			if err != nil {
-				slog.Error("ScanStream error", slog.String("scan_id", scanID), slog.Any("error", err))
-				clamResult = &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("ScanStream error: %v", err)}
-				return
-			}
-			for s := range clamdResponse {
-				clamResult = s
-			}
-		}()
-
-		// Worker 2: YARA (os/exec)
-		go func() {
-			defer wg.Done()
-			yaraResult = RunYaraScan(filename)
-		}()
-
-		// Worker 3: Maldet (os/exec)
-		go func() {
-			defer wg.Done()
-			maldetResult = RunMaldetScan(filename)
-		}()
-
-		wg.Wait()
-
-		// Aggregate results
-		finalStatus := clamd.RES_OK
-		var descriptions []string
-
-		if clamResult != nil {
-			if clamResult.Status == clamd.RES_FOUND {
-				finalStatus = clamd.RES_FOUND
-				descriptions = append(descriptions, "ClamAV:"+clamResult.Description)
-			}
-		}
-
-		if yaraResult.IsInfected {
-			finalStatus = clamd.RES_FOUND
-			descriptions = append(descriptions, "YARA:"+yaraResult.Signature)
-		}
-
-		if maldetResult.IsInfected {
-			finalStatus = clamd.RES_FOUND
-			descriptions = append(descriptions, "Maldet:"+maldetResult.Signature)
-		}
-
-		finalDescription := "CLEAN"
-		if finalStatus == clamd.RES_FOUND {
-			finalDescription = strings.Join(descriptions, " | ")
-		} else if clamResult != nil && clamResult.Status == clamd.RES_ERROR {
-			finalStatus = clamd.RES_ERROR
-			finalDescription = clamResult.Description
-		}
-
-		aggregatedResult := &clamd.ScanResult{
-			Status:      finalStatus,
-			Description: finalDescription,
+		
+		aggregatedResult, err := RunMultiEngineScan(f, filename, c)
+		if err != nil {
+			slog.Error("RunMultiEngineScan error", slog.String("scan_id", scanID), slog.Any("error", err))
+			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Scan engine error"}, scanID, originalName, tenantID)
+			return
 		}
 
 		slog.Info("Finished scanning", 

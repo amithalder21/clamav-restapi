@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/dutchcoders/go-clamd"
@@ -59,23 +61,40 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	limitedBody := http.MaxBytesReader(nil, resp.Body, maxFileSizeBytes+1024*1024)
 
 	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-	var abort chan bool
-	clamdResponse, err := c.ScanStream(limitedBody, abort)
 	
+	tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "sync-url-*")
 	if err != nil {
-		slog.Error("ScanStream error", slog.String("url", req.URL), slog.Any("error", err))
+		slog.Error("Failed to create temp file for URL scan", slog.Any("error", err))
+		writeJSONError(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	tempFilePath := tempFile.Name()
+	defer os.Remove(tempFilePath)
+	
+	_, err = io.Copy(tempFile, limitedBody)
+	if err != nil {
+		slog.Error("Failed to save URL stream to temp file", slog.Any("error", err))
+		writeJSONError(w, "Failed to read URL stream", http.StatusInternalServerError)
+		tempFile.Close()
+		return
+	}
+
+	aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, c)
+	tempFile.Close()
+
+	if err != nil {
+		slog.Error("RunMultiEngineScan error", slog.String("url", req.URL), slog.Any("error", err))
 		writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
 		return
 	}
 
-	for s := range clamdResponse {
-		slog.Info("Finished scanning URL", 
-			slog.String("url", req.URL), 
-			slog.String("result", formatStatus(s.Status)), 
-			slog.String("description", s.Description),
-			slog.Duration("duration_ms", time.Since(start)),
-		)
-		writeScanResponse(w, s, req.URL)
-		break
-	}
+	s := aggregatedResult
+
+	slog.Info("Finished scanning URL", 
+		slog.String("url", req.URL), 
+		slog.String("result", formatStatus(s.Status)), 
+		slog.String("description", s.Description),
+		slog.Duration("duration_ms", time.Since(start)),
+	)
+	writeScanResponse(w, s, req.URL)
 }
