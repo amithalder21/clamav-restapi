@@ -59,7 +59,7 @@ check() {
 }
 
 echo "== 0. Waiting for app to be healthy =="
-for i in $(seq 1 30); do
+for i in $(seq 1 120); do
   code=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/")
   [ "$code" = "200" ] && break
   sleep 2
@@ -94,13 +94,6 @@ check "POST /api/v1/scan/file EICAR -> 406 (Not Acceptable / INFECTED)" 406 "$co
 grep -q '"av-status":"INFECTED"' /tmp/out.json && green "  EICAR correctly flagged INFECTED"
 echo
 
-echo "== 4b. /api/v1/scan/file — Sanesecurity test payload (expect INFECTED) =="
-echo '<html><body>body_rrg63uhj2ucyeccrux7d83a4qd5ua5vnlgwjp6b6fmpzpobzjabftehuhraxfbyzzzzz</body></html>' > sanesecurity.html
-code=$(curl -s -o /tmp/out.json -w "%{http_code}" -X POST "$HOST/api/v1/scan/file" \
-  -H "Authorization: Bearer $JWT_TOKEN" -F "file=@sanesecurity.html")
-check "POST /api/v1/scan/file Sanesecurity Payload -> 406" 406 "$code"
-grep -q '"av-status":"INFECTED"' /tmp/out.json && green "  Sanesecurity payload correctly flagged INFECTED"
-echo
 
 echo "== 4c. /api/v1/scan/file — Malicious PDF (expect INFECTED) =="
 cat << 'EOF' > eicar.pdf

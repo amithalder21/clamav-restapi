@@ -64,6 +64,7 @@ services:
       - MAX_RECURSION=16
       - MAX_FILES=10000
       - ASYNC_TEMP_DIR=/tmp
+      - APP_CLAMD_ENDPOINT=tcp://127.0.0.1:3310
 
       # --- Auth ---
 

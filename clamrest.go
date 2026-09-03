@@ -83,6 +83,9 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			var abort chan bool
 			response, err := c.ScanStream(interceptReader, abort)
 			if err != nil {
+				if interceptReader.Err != nil && checkMaxBytesError(w, interceptReader.Err) {
+					return
+				}
 				slog.Error("ScanStream error", slog.Any("error", err))
 				writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
 				return
@@ -121,7 +124,7 @@ func waitForClamD(port string, times int) {
 	version, err := clamdTest.Version()
 
 	if err != nil {
-		if times < 30 {
+		if times < 90 {
 			slog.Info("clamD not running, waiting", slog.Int("attempt", times))
 			time.Sleep(time.Second * 4)
 			waitForClamD(port, times+1)

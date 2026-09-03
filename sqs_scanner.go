@@ -275,9 +275,10 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 				}
 
 				copyReq := &s3.CopyObjectInput{
-					Bucket:     aws.String(quarantineBucket),
-					CopySource: aws.String(copySource),
-					Key:        aws.String(key),
+					Bucket:           aws.String(quarantineBucket),
+					CopySource:       aws.String(copySource),
+					Key:              aws.String(key),
+					TaggingDirective: s3types.TaggingDirectiveCopy,
 				}
 				_, err := s3Client.CopyObject(context.TODO(), copyReq)
 				if err != nil {
