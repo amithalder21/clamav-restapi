@@ -35,6 +35,25 @@ type TenantConfig struct {
 	WebhookURL string `json:"webhook_url"`
 }
 
+// scanProcessingMarker is the sentinel value written to Redis the moment a
+// scan is accepted, before the background scan has run. It lets
+// handleAsyncPolling tell "submitted but still running" (202) apart from
+// "this scan_id was never submitted" (404) - previously both cases returned
+// an identical 404, since nothing was written to Redis until the scan
+// actually completed.
+const scanProcessingMarker = `{"status":"processing"}`
+
+func markScanProcessing(tenantID, scanID string) {
+	if redisClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := redisClient.Set(ctx, "tenant:"+tenantID+":scan:"+scanID, scanProcessingMarker, 24*time.Hour).Err(); err != nil {
+		slog.Error("Failed to mark scan as processing in Redis", slog.String("scan_id", scanID), slog.String("tenant_id", tenantID), slog.Any("error", err))
+	}
+}
+
 func publishAsyncResult(webhookURL string, s *clamd.ScanResult, scanID string, filename string, tenantID string) {
 	payload, _ := formatScanResponse(s, scanID, filename)
 	
@@ -111,6 +130,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scanID := uuid.New().String()
+	markScanProcessing(tenantID, scanID)
 
 	// Send immediate response
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -163,6 +183,13 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			tempFile.Close()
 			slog.Error("Failed to save URL stream to temp file", slog.String("scan_id", scanID), slog.Any("error", err))
 			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: fmt.Sprintf("Failed to read URL stream: %v", err)}, scanID, req.URL, tenantID)
+			return
+		}
+
+		if IsEncryptedZip(tempFilePath) {
+			tempFile.Close()
+			slog.Warn("Rejected encrypted archive", slog.String("scan_id", scanID), slog.String("url", req.URL))
+			publishAsyncResult(req.WebhookURL, &clamd.ScanResult{Status: clamd.RES_FOUND, Description: encryptedArchiveSignature}, scanID, req.URL, tenantID)
 			return
 		}
 
@@ -246,8 +273,16 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tempFile.Close() // close it for now, we will open it in the goroutine
-	
+
+	if IsEncryptedZip(tempFile.Name()) {
+		os.Remove(tempFile.Name())
+		slog.Warn("Rejected encrypted archive", slog.String("filename", header.Filename))
+		writeJSONError(w, encryptedArchiveMessage, http.StatusUnsupportedMediaType)
+		return
+	}
+
 	scanID := uuid.New().String()
+	markScanProcessing(tenantID, scanID)
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusAccepted)
@@ -344,15 +379,22 @@ func handleAsyncPolling(w http.ResponseWriter, r *http.Request) {
 
 	val, err := redisClient.Get(r.Context(), "tenant:"+tenantID+":scan:"+scanID).Result()
 	if err == redis.Nil {
-		writeJSONError(w, "Scan not found or still processing", http.StatusNotFound)
+		writeJSONError(w, "Scan not found", http.StatusNotFound)
 		return
 	} else if err != nil {
 		slog.Error("Failed to get scan result from Redis", slog.String("scan_id", scanID), slog.String("tenant_id", tenantID), slog.Any("error", err))
 		writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
+	if val == scanProcessingMarker {
+		// Submitted and known, but the background scan hasn't finished yet -
+		// distinct from 404 (scan_id never existed) so callers can safely
+		// poll-and-retry instead of treating this as a bad/expired scan_id.
+		w.WriteHeader(http.StatusAccepted)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 	w.Write([]byte(val))
 }

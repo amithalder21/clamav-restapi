@@ -46,6 +46,13 @@ RUN [ -f /etc/clamd.conf ] && sed -i 's/^Example$/# Example/g' /etc/clamd.conf |
 
 RUN freshclam --quiet --no-dns
 
+# Custom, non-EICAR ClamAV test signature (offset "*" = matches anywhere in
+# the file) used to demonstrate position/padding independence separately
+# from EICAR's own exact-68-byte-match design quirk (P2, 2026-09-01 AppSec
+# report). freshclam only manages its own official CVD/CLD databases, so
+# this custom .ndb is untouched by signature updates.
+COPY test-signatures/local.ndb /var/lib/clamav/local.ndb
+
 # Copy binary, certs, and YARA rules
 COPY --from=builder /src/clamav-rest /usr/bin/
 COPY ssl/server.* /etc/ssl/clamav-rest/

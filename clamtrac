@@ -9,6 +9,7 @@ usage() {
     echo "  test e2e       Run the multi-tenant E2E integration tests"
     echo "  test api       Run the comprehensive API endpoint tests"
     echo "  test sqs       Run the AWS SQS polling integration tests"
+    echo "  test p2        Run the position/padding-independence signature test"
     echo "  docker up      Start the local Docker Compose stack in the background"
     echo "  docker down    Tear down the local Docker Compose stack"
     echo "  docker restart Restart the local Docker Compose stack"
@@ -30,6 +31,7 @@ case "$COMMAND" in
             e2e) bash ./tests/test-multi-tenant.sh ;;
             api) bash ./tests/test-endpoints.sh ;;
             sqs) bash ./tests/test-aws.sh ;;
+            p2) bash ./tests/test-p2-position-independence.sh ;;
             *) echo "Unknown test subcommand: $SUBCOMMAND"; usage; exit 1 ;;
         esac
         ;;

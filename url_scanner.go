@@ -79,6 +79,13 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if IsEncryptedZip(tempFilePath) {
+		tempFile.Close()
+		slog.Warn("Rejected encrypted archive", slog.String("url", req.URL))
+		writeJSONError(w, encryptedArchiveMessage, http.StatusUnsupportedMediaType)
+		return
+	}
+
 	aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, req.URL, c)
 	tempFile.Close()
 

@@ -202,13 +202,24 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			continue
 		}
 
-		aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, key, c)
-		tempFile.Close()
+		var aggregatedResult *clamd.ScanResult
+		if IsEncryptedZip(tempFilePath) {
+			// None of ClamAV/YARA/Maldet can inspect encrypted content, so
+			// treat as INFECTED rather than silently letting it through -
+			// this reuses the existing quarantine/delete/SNS/tag pipeline
+			// below instead of needing new status-handling logic downstream.
+			tempFile.Close()
+			slog.Warn("Rejected encrypted archive from S3", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key))
+			aggregatedResult = &clamd.ScanResult{Status: clamd.RES_FOUND, Description: encryptedArchiveSignature}
+		} else {
+			aggregatedResult, err = RunMultiEngineScan(tempFile, tempFilePath, key, c)
+			tempFile.Close()
 
-		if err != nil {
-			slog.Error("RunMultiEngineScan error for S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
-			objResp.Body.Close()
-			continue
+			if err != nil {
+				slog.Error("RunMultiEngineScan error for S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
+				objResp.Body.Close()
+				continue
+			}
 		}
 
 		var scanStatus string

@@ -313,6 +313,16 @@ HTTP/1.1 202 Accepted
 {"scan_id":"uuid-string","message":"Scan started asynchronously","filename":"https://secure.eicar.org/eicar.com.txt"}
 ```
 
+### 5. Polling for an Async Result (alternative to webhooks)
+If `REDIS_URL` is configured, both `/api/v1/async-scan/file` and `/api/v1/async-scan/url` also accept `GET` with a `scan_id` query parameter, as an alternative to (or backstop for) the webhook callback:
+
+```bash
+curl -i -H "Authorization: Bearer $JWT_TOKEN" "http://localhost:9000/api/v1/async-scan/file?scan_id=uuid-string"
+```
+- `200 OK` with the full scan result once the background scan has completed.
+- `202 Accepted` with `{"status":"processing"}` if `scan_id` was submitted but the scan hasn't finished yet.
+- `404 Not Found` only if `scan_id` was never submitted (or has expired past its 24h TTL) - distinct from the 202 "still running" case, so callers can safely poll-and-retry instead of treating an in-progress scan as a failure.
+
 
 ---
 
@@ -481,7 +491,10 @@ The API strictly adheres to the following HTTP status codes for all scan endpoin
 - `400` - ClamAV returned a general error for the file
 - `406` - INFECTED
 - `412` - Unable to parse the file
+- `415` - Encrypted/password-protected archive (ZIP) rejected without scanning - none of ClamAV/YARA/Maldet can inspect encrypted content
 - `501` - Unknown request
+
+> **Note on encrypted archives:** `/api/v1/scan/file`, `/api/v1/scan/url`, and `/api/v1/async-scan/file` (which stages the upload to disk before responding) return `415` directly. `/api/v1/async-scan/url` and the S3/SQS event pipeline already commit their `202`/event-ack response before the content is fetched, so for those the rejection instead surfaces as `av-status: INFECTED` with `av-signature: POLICY:ENCRYPTED_ARCHIVE_REJECTED` via the webhook/S3 tag - reusing the existing quarantine/delete/SNS-alert automation rather than adding a new status value those integrations wouldn't recognize. Detection currently covers password-protected ZIP only (the confirmed bypass in the 2026-09-01 AppSec test); RAR/7z encryption detection is a known follow-up.
 
 > **Note on degraded scans:** if YARA or Maldet fails to complete for a given scan (crash, missing binary, or exceeding `SCAN_ENGINE_TIMEOUT_SECONDS`), the HTTP status code still reflects the engines that *did* complete, but the `av-signature` field is appended with `WARNING: <Engine> engine(s) did not complete - scan coverage reduced` so callers can detect and act on reduced detection coverage rather than trusting a false all-clear.
 
@@ -523,6 +536,7 @@ docker compose -f docker-compose.local.yml logs -f clamav-rest
 ./clamtrac test e2e       # Multi-tenant Auth, Dragonfly isolation, Quarantine
 ./clamtrac test api       # SSRF, Upload Limits, Basic File Scanning
 ./clamtrac test sqs       # S3 ObjectCreated background SQS polling
+./clamtrac test p2        # Position/padding-independence, using a real wildcard-offset signature (not EICAR)
 
 # 4. Tear down the environment when finished
 docker compose -f docker-compose.local.yml down -v
