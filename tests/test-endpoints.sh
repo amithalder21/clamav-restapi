@@ -16,6 +16,12 @@ ENDPOINT="http://localhost:9229"
 REGION="us-east-1"
 
 # Provision Cognito pool and client
+echo "Waiting for cognito-local to be ready..."
+for i in $(seq 1 30); do
+  curl -s -o /dev/null http://localhost:9229 && break
+  sleep 1
+done
+
 POOL_ID=$(aws --endpoint-url=$ENDPOINT cognito-idp create-user-pool --pool-name test-pool --region $REGION --query 'UserPool.Id' --output text)
 CLIENT_ID=$(aws --endpoint-url=$ENDPOINT cognito-idp create-user-pool-client --user-pool-id $POOL_ID --client-name test-client --region $REGION --query 'UserPoolClient.ClientId' --output text)
 

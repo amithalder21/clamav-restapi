@@ -54,6 +54,8 @@ services:
         condition: service_started
       dragonfly:
         condition: service_started
+      cognito-local:
+        condition: service_started
     ports:
       - "9000:9000"
       - "9443:9443"
