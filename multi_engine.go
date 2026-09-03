@@ -5,9 +5,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
-	
+
 	"github.com/dutchcoders/go-clamd"
 )
 
@@ -19,10 +20,24 @@ type EngineResult struct {
 	Error     error
 }
 
-func RunYaraScan(filePath string) EngineResult {
+func RunYaraScan(filePath string, originalFilename string) EngineResult {
+	// The staged file on disk has a randomly generated name with no extension
+	// (e.g. "sync-scan-873421"), so populate YARA's external variables from the
+	// real, original filename/extension. Without this, any signature-base rule
+	// that gates on filename/extension (common for .exe/.dll triage rules) can
+	// never match, regardless of file content.
+	baseName := filepath.Base(originalFilename)
+	extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(baseName)), ".")
+
 	// Execute YARA with the rules directory
 	// #nosec G204
-	cmd := exec.Command("yara", "-d", "filename=", "-d", "filepath=", "-d", "extension=", "-d", "owner=", "-d", "filetype=", "/var/lib/yara_rules/index.yar", filePath)
+	cmd := exec.Command("yara",
+		"-d", "filename="+baseName,
+		"-d", "filepath="+originalFilename,
+		"-d", "extension="+extension,
+		"-d", "owner=",
+		"-d", "filetype=",
+		"/var/lib/yara_rules/index.yar", filePath)
 	output, err := cmd.CombinedOutput()
 	
 	result := EngineResult{
@@ -58,9 +73,13 @@ func RunYaraScan(filePath string) EngineResult {
 }
 
 func RunMaldetScan(filePath string) EngineResult {
-	// Execute Maldet against the specific file
+	// Maldet's default config has scan_ignore_root=1 ("LMD typically only scans
+	// user space paths... it makes sense to ignore files that are root owned").
+	// This app always runs as root and every staged file it writes is therefore
+	// root-owned, so without this override Maldet silently reports 0 hits on
+	// every scan regardless of content.
 	// #nosec G204
-	cmd := exec.Command("maldet", "-a", filePath)
+	cmd := exec.Command("maldet", "-co", "scan_ignore_root=0", "-a", filePath)
 	output, err := cmd.CombinedOutput()
 	
 	result := EngineResult{
@@ -85,7 +104,7 @@ func RunMaldetScan(filePath string) EngineResult {
 	return result
 }
 
-func RunMultiEngineScan(f *os.File, filePath string, c *clamd.Clamd) (*clamd.ScanResult, error) {
+func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c *clamd.Clamd) (*clamd.ScanResult, error) {
 	var abort chan bool
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -113,7 +132,7 @@ func RunMultiEngineScan(f *os.File, filePath string, c *clamd.Clamd) (*clamd.Sca
 	// Worker 2: YARA
 	go func() {
 		defer wg.Done()
-		yaraResult = RunYaraScan(filePath)
+		yaraResult = RunYaraScan(filePath, originalFilename)
 	}()
 
 	// Worker 3: Maldet

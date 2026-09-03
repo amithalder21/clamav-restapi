@@ -254,7 +254,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		
-		aggregatedResult, err := RunMultiEngineScan(f, filename, c)
+		aggregatedResult, err := RunMultiEngineScan(f, filename, originalName, c)
 		if err != nil {
 			slog.Error("RunMultiEngineScan error", slog.String("scan_id", scanID), slog.Any("error", err))
 			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Scan engine error"}, scanID, originalName, tenantID)

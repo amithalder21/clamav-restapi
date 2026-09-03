@@ -107,7 +107,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, c)
+			aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, part.FileName(), c)
 			tempFile.Close()
 			
 			if err != nil {

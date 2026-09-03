@@ -202,7 +202,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			continue
 		}
 
-		aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, c)
+		aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, key, c)
 		tempFile.Close()
 
 		if err != nil {
