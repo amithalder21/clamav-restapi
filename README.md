@@ -31,16 +31,15 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **JWT Authentication**: Secure the API using AWS Cognito (or any OIDC provider) by validating Bearer tokens against a remote JWKS.
 - **Admin API**: Secured endpoints to check daemon health, Go runtime metrics, and manually reload the virus database.
 
-### Embedded Third-Party Signatures (Sanesecurity)
+### Dynamic Threat Intel & Memory Optimization
 
-To close the gap against modern PDF delivery vectors, the Docker image is natively pre-configured to download and enforce the following [Sanesecurity](https://sanesecurity.com/) third-party definitions:
+To aggressively close the gap against modern delivery vectors without bloating the container, ClamTrac natively integrates two supplementary scanners:
+- **YARA (Behavioral Analysis)**: Driven by the open-source `signature-base` repository. 
+- **Linux Malware Detect (Maldet)**: Specialized in Web Shells and Linux rootkits.
 
-- **`malwarehash.hsb` & `foxhole_generic.cdb`**: Malicious file hashes and generic malware detection (channel-agnostic).
-- **`foxhole_js.cdb`**: Embedded JavaScript detection (the primary payload mechanism in malicious PDFs).
-- **`phish.ndb` & `scam.ndb`**: Phishing and scam content detection.
-- **`rogue.hdb`**: Rogue software hashes.
-- **`badmacro.ndb`**: Malicious macro detection (safety net for non-PDF documents).
-- **`sigwhitelist.ign2` & `sanesecurity.ftm`**: Mandatory false-positive suppression rules paired with the above databases.
+The container runs an autonomous background daemon (`update_signatures.sh`) every 12 hours that clones the absolute latest YARA and Maldet heuristics directly from their source repositories and hot-reloads them. 
+
+> **Note on ECS Scaling:** Previous versions downloaded 9 massive Sanesecurity text databases which required 4GB+ of RAM. By removing those in favor of Maldet/YARA, and disabling `ConcurrentDatabaseReload` in `clamd.conf`, **this entire stack can now run comfortably inside a 2GB ECS Task**.
 
 ---
 
@@ -510,15 +509,16 @@ This project includes a full Docker Compose test rig that spins up the API, a mo
 #### Running the Test Suite
 
 ```bash
-# 1. Spin up the local test environment (API, LocalStack, Webhook Receiver)
-docker compose -f docker-compose.local.yml up --build -d
+# 1. Spin up the local test environment (API, LocalStack, Webhook Receiver, Cognito)
+./clamtrac docker restart
 
-# 2. Watch it come healthy (clamd + freshclam take ~30-60s on first boot)
+# 2. Watch it come healthy
 docker compose -f docker-compose.local.yml logs -f clamav-rest
 
-# 3. Run the automated test script
-chmod +x test-endpoints.sh
-./test-endpoints.sh
+# 3. Run the automated test scripts using the unified CLI
+./clamtrac test e2e       # Multi-tenant Auth, Dragonfly isolation, Quarantine
+./clamtrac test api       # SSRF, Upload Limits, Basic File Scanning
+./clamtrac test sqs       # S3 ObjectCreated background SQS polling
 
 # 4. Tear down the environment when finished
 docker compose -f docker-compose.local.yml down -v
