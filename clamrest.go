@@ -37,6 +37,9 @@ func home(w http.ResponseWriter, r *http.Request) {
 	// Ping clamd to ensure it is responsive
 	err := c.Ping()
 	if err != nil {
+		// This hits an ALB health check every 10-30s per task - only log the
+		// failure case (which is genuinely actionable), not every success.
+		slog.Error("Health check failed: ClamAV daemon unreachable", slog.Any("error", err))
 		writeJSONError(w, "ClamAV daemon is unreachable", http.StatusServiceUnavailable)
 		return
 	}
@@ -234,8 +237,13 @@ func main() {
 	http.HandleFunc("/api/v1/admin/reload", RequestLoggingMiddleware(AdminAuthMiddleware(adminReloadHandler)))
 	http.HandleFunc("/api/v1/admin/update-signatures", RequestLoggingMiddleware(AdminAuthMiddleware(adminUpdateSignaturesHandler)))
 
-	http.HandleFunc("/api/v1/health", RequestLoggingMiddleware(home))
-	http.HandleFunc("/", RequestLoggingMiddleware(home))
+	// Not wrapped in RequestLoggingMiddleware: an ALB target-group health
+	// check hits this every 10-30s per task, forever. There's no meaningful
+	// lifecycle to trace in a single clamd.Ping() call, and logging two INFO
+	// lines per ping would drown out everything else in CloudWatch for
+	// essentially zero diagnostic value. Failures are still logged, in home().
+	http.HandleFunc("/api/v1/health", home)
+	http.HandleFunc("/", home)
 
 	// Explicit timeouts: without these, the default http.Server has none, so a
 	// single crafted upload that makes a scan engine hang (see engineTimeout in
