@@ -14,11 +14,74 @@ import (
 	"time"
 
 	"github.com/dutchcoders/go-clamd"
+	"github.com/google/uuid"
 )
 
 type contextKey string
 
 const TenantContextKey contextKey = "tenant_id"
+const RequestIDContextKey contextKey = "request_id"
+
+// requestIDFromContext returns the per-request trace ID set by
+// RequestLoggingMiddleware, or "" if called outside that middleware (e.g.
+// the background SQS poller, which has no originating HTTP request).
+func requestIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(RequestIDContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code actually
+// written, so RequestLoggingMiddleware can log it after the handler returns.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// RequestLoggingMiddleware is the outermost wrapper on every route: it assigns
+// a request_id threaded through every downstream log line (auth, upload,
+// per-engine scan timing, result) via context, and logs a start/end pair with
+// the method, path, final status code, and total wall time. This is what lets
+// every phase of a single request be correlated and diagnosed from logs alone
+// instead of guessing from timestamps, which is how the auth-latency and
+// upload-time investigations in this codebase's history had to be done.
+func RequestLoggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		requestID := uuid.New().String()
+		start := time.Now()
+		ctx := context.WithValue(r.Context(), RequestIDContextKey, requestID)
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		// Surface the request_id to the caller too, not just server-side logs -
+		// otherwise tracing is one-directional: if a client hits an error, they
+		// have no way to tell you which request was theirs. Must be set before
+		// any handler writes the status/body (headers are frozen after
+		// WriteHeader), so this happens before next() runs.
+		rec.Header().Set("X-Request-Id", requestID)
+
+		slog.Info("Request received",
+			slog.String("request_id", requestID),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+		)
+
+		next(rec, r.WithContext(ctx))
+
+		slog.Info("Request completed",
+			slog.String("request_id", requestID),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status_code", rec.status),
+			slog.Int64("total_ms", time.Since(start).Milliseconds()),
+		)
+	}
+}
 
 // writeJSONError writes a standard JSON error response
 func writeJSONError(w http.ResponseWriter, message string, statusCode int) {

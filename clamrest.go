@@ -21,7 +21,13 @@ func init() {
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	// "/" is registered as Go's classic ServeMux catch-all pattern (it matches
+	// any path with no more specific registered handler), so without this
+	// check every unmatched path would silently reach here instead of 404ing.
+	// "/api/v1/health" is also intentionally registered to this handler and
+	// must be allowed through, or the documented health check endpoint is
+	// unreachable via the app's own routing.
+	if r.URL.Path != "/" && r.URL.Path != "/api/v1/health" {
 		writeJSONError(w, "Not Found", http.StatusNotFound)
 		return
 	}
@@ -77,26 +83,29 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			requestID := requestIDFromContext(r.Context())
 			start := time.Now()
-			slog.Info("Started scanning file", slog.String("filename", part.FileName()))
+			slog.Info("Started scanning file", slog.String("request_id", requestID), slog.String("filename", part.FileName()))
 			interceptReader := &ErrorInterceptingReader{Reader: part}
-			
+
 			tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "sync-scan-*")
 			if err != nil {
-				slog.Error("Failed to create temp file", slog.Any("error", err))
-				writeJSONError(w, "Internal Server Error", http.StatusInternalServerError)
+				slog.Error("Failed to create temp file", slog.String("request_id", requestID), slog.Any("error", err))
+				writeJSONError(w, "Internal server error", http.StatusInternalServerError)
 				return
 			}
 			tempFilePath := tempFile.Name()
 			defer os.Remove(tempFilePath)
-			
+
+			uploadStart := time.Now()
 			_, err = io.Copy(tempFile, interceptReader)
+			uploadDuration := time.Since(uploadStart)
 			if err != nil {
 				if interceptReader.Err != nil && checkMaxBytesError(w, interceptReader.Err) {
 					tempFile.Close()
 					return
 				}
-				slog.Error("Failed to save temp file", slog.Any("error", err))
+				slog.Error("Failed to save temp file", slog.String("request_id", requestID), slog.Any("error", err))
 				writeJSONError(w, "Failed to read upload", http.StatusInternalServerError)
 				tempFile.Close()
 				return
@@ -109,16 +118,16 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 
 			if IsEncryptedZip(tempFilePath) {
 				tempFile.Close()
-				slog.Warn("Rejected encrypted archive", slog.String("filename", part.FileName()))
+				slog.Warn("Rejected encrypted archive", slog.String("request_id", requestID), slog.String("filename", part.FileName()))
 				writeJSONError(w, encryptedArchiveMessage, http.StatusUnsupportedMediaType)
 				return
 			}
 
-			aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, part.FileName(), c)
+			aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, part.FileName(), c, requestID)
 			tempFile.Close()
-			
+
 			if err != nil {
-				slog.Error("RunMultiEngineScan error", slog.Any("error", err))
+				slog.Error("RunMultiEngineScan error", slog.String("request_id", requestID), slog.Any("error", err))
 				writeJSONError(w, "Scan engine error", http.StatusInternalServerError)
 				return
 			}
@@ -129,10 +138,12 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				writeJSONError(w, "Payload Too Large or Parse Error", http.StatusRequestEntityTooLarge)
 				return
 			}
-			slog.Info("Finished scanning file", 
+			slog.Info("Finished scanning file",
+				slog.String("request_id", requestID),
 				slog.String("filename", part.FileName()),
 				slog.String("result", formatStatus(s.Status)),
 				slog.String("description", s.Description),
+				slog.Int64("upload_ms", uploadDuration.Milliseconds()),
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			)
 			writeScanResponse(w, s, part.FileName())
@@ -208,19 +219,23 @@ func main() {
 
 	slog.Info("Connected to clamd", slog.String("port", opts["APP_CLAMD_ENDPOINT"]))
 
-	http.HandleFunc("/api/v1/scan/file", AuthMiddleware(scanHandler))
-	http.HandleFunc("/api/v1/scan/url", AuthMiddleware(scanURLHandler))
-	http.HandleFunc("/api/v1/async-scan/file", AuthMiddleware(scanAsyncHandler))
-	http.HandleFunc("/api/v1/async-scan/url", AuthMiddleware(scanURLAsyncHandler))
-	http.HandleFunc("/api/v1/events/s3", AuthMiddleware(scanS3EventHandler))
-	
+	// RequestLoggingMiddleware is the outermost wrapper on every route (auth
+	// included) so a single request_id ties together auth timing, upload
+	// timing, per-engine scan timing, and the final result across every log
+	// line for that request.
+	http.HandleFunc("/api/v1/scan/file", RequestLoggingMiddleware(AuthMiddleware(scanHandler)))
+	http.HandleFunc("/api/v1/scan/url", RequestLoggingMiddleware(AuthMiddleware(scanURLHandler)))
+	http.HandleFunc("/api/v1/async-scan/file", RequestLoggingMiddleware(AuthMiddleware(scanAsyncHandler)))
+	http.HandleFunc("/api/v1/async-scan/url", RequestLoggingMiddleware(AuthMiddleware(scanURLAsyncHandler)))
+	http.HandleFunc("/api/v1/events/s3", RequestLoggingMiddleware(AuthMiddleware(scanS3EventHandler)))
+
 	// Admin Endpoints
-	http.HandleFunc("/api/v1/admin/status", AdminAuthMiddleware(adminStatusHandler))
-	http.HandleFunc("/api/v1/admin/reload", AdminAuthMiddleware(adminReloadHandler))
-	http.HandleFunc("/api/v1/admin/update-signatures", AdminAuthMiddleware(adminUpdateSignaturesHandler))
-	
-	http.HandleFunc("/api/v1/health", home)
-	http.HandleFunc("/", home)
+	http.HandleFunc("/api/v1/admin/status", RequestLoggingMiddleware(AdminAuthMiddleware(adminStatusHandler)))
+	http.HandleFunc("/api/v1/admin/reload", RequestLoggingMiddleware(AdminAuthMiddleware(adminReloadHandler)))
+	http.HandleFunc("/api/v1/admin/update-signatures", RequestLoggingMiddleware(AdminAuthMiddleware(adminUpdateSignaturesHandler)))
+
+	http.HandleFunc("/api/v1/health", RequestLoggingMiddleware(home))
+	http.HandleFunc("/", RequestLoggingMiddleware(home))
 
 	// Explicit timeouts: without these, the default http.Server has none, so a
 	// single crafted upload that makes a scan engine hang (see engineTimeout in

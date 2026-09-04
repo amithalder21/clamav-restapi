@@ -38,7 +38,7 @@ type EngineResult struct {
 	Duration   time.Duration
 }
 
-func RunYaraScan(filePath string, originalFilename string) (result EngineResult) {
+func RunYaraScan(filePath string, originalFilename string, requestID string) (result EngineResult) {
 	start := time.Now()
 	defer func() { result.Duration = time.Since(start) }()
 
@@ -71,7 +71,7 @@ func RunYaraScan(filePath string, originalFilename string) (result EngineResult)
 	output, err := cmd.CombinedOutput()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		slog.Error("YARA scan timed out", slog.String("file", filePath), slog.String("timeout", engineTimeout().String()))
+		slog.Error("YARA scan timed out", slog.String("request_id", requestID), slog.String("file", filePath), slog.String("timeout", engineTimeout().String()))
 		result.Error = ctx.Err()
 		return result
 	}
@@ -81,7 +81,7 @@ func RunYaraScan(filePath string, originalFilename string) (result EngineResult)
 		// means a genuine problem (missing/broken rules file, binary missing,
 		// bad arguments) - not "no threats found". Treat it as an engine
 		// failure rather than silently reporting clean.
-		slog.Error("YARA execution error", slog.Any("error", err), slog.String("output", string(output)))
+		slog.Error("YARA execution error", slog.String("request_id", requestID), slog.Any("error", err), slog.String("output", string(output)))
 		result.Error = err
 		return result
 	}
@@ -107,7 +107,7 @@ func RunYaraScan(filePath string, originalFilename string) (result EngineResult)
 	return result
 }
 
-func RunMaldetScan(filePath string) (result EngineResult) {
+func RunMaldetScan(filePath string, requestID string) (result EngineResult) {
 	start := time.Now()
 	defer func() { result.Duration = time.Since(start) }()
 
@@ -127,7 +127,7 @@ func RunMaldetScan(filePath string) (result EngineResult) {
 	outStr := string(output)
 
 	if ctx.Err() == context.DeadlineExceeded {
-		slog.Error("Maldet scan timed out", slog.String("file", filePath), slog.String("timeout", engineTimeout().String()))
+		slog.Error("Maldet scan timed out", slog.String("request_id", requestID), slog.String("file", filePath), slog.String("timeout", engineTimeout().String()))
 		result.Error = ctx.Err()
 		return result
 	}
@@ -138,11 +138,11 @@ func RunMaldetScan(filePath string) (result EngineResult) {
 			// maldet couldn't even run (binary missing/not executable) or produced
 			// no output at all - a genuine engine failure, distinct from the
 			// non-zero exit code Maldet is known to return when hits are found.
-			slog.Error("Maldet execution error", slog.Any("error", err), slog.String("output", outStr))
+			slog.Error("Maldet execution error", slog.String("request_id", requestID), slog.Any("error", err), slog.String("output", outStr))
 			result.Error = err
 			return result
 		}
-		slog.Warn("Maldet exited non-zero; parsing output anyway (may indicate hits)", slog.Any("error", err))
+		slog.Warn("Maldet exited non-zero; parsing output anyway (may indicate hits)", slog.String("request_id", requestID), slog.Any("error", err))
 	}
 
 	// Maldet outputs a summary report. We can parse for "malware hits"
@@ -156,7 +156,8 @@ func RunMaldetScan(filePath string) (result EngineResult) {
 	return result
 }
 
-func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c *clamd.Clamd) (*clamd.ScanResult, error) {
+func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c *clamd.Clamd, requestID string) (*clamd.ScanResult, error) {
+	wallStart := time.Now()
 	var abort chan bool
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -187,22 +188,28 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	// Worker 2: YARA
 	go func() {
 		defer wg.Done()
-		yaraResult = RunYaraScan(filePath, originalFilename)
+		yaraResult = RunYaraScan(filePath, originalFilename, requestID)
 	}()
 
 	// Worker 3: Maldet
 	go func() {
 		defer wg.Done()
-		maldetResult = RunMaldetScan(filePath)
+		maldetResult = RunMaldetScan(filePath, requestID)
 	}()
 
 	wg.Wait()
 
 	// Per-engine breakdown so a slow scan is diagnosable directly from logs
 	// (which engine dominated the total) instead of just seeing one combined
-	// duration and having to guess.
+	// duration and having to guess. total_wall_ms is the FULL span from
+	// entering this function to all 3 workers finishing - if it's
+	// meaningfully larger than the max of the 3 engine times below, that gap
+	// is goroutine-scheduling/CPU-throttling overhead, not engine work, and
+	// is now visible directly instead of requiring manual timestamp math.
 	slog.Info("Multi-engine scan timing",
+		slog.String("request_id", requestID),
 		slog.String("file", filePath),
+		slog.Int64("total_wall_ms", time.Since(wallStart).Milliseconds()),
 		slog.Int64("clamav_ms", clamDuration.Milliseconds()),
 		slog.Int64("yara_ms", yaraResult.Duration.Milliseconds()),
 		slog.Int64("maldet_ms", maldetResult.Duration.Milliseconds()),
@@ -256,6 +263,7 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	if len(warnings) > 0 {
 		finalDescription += " | WARNING: " + strings.Join(warnings, ",") + " engine(s) did not complete - scan coverage reduced"
 		slog.Error("Multi-engine scan degraded: one or more engines failed",
+			slog.String("request_id", requestID),
 			slog.String("failed_engines", strings.Join(warnings, ",")),
 			slog.String("file", filePath))
 	}

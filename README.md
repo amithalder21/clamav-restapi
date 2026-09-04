@@ -22,7 +22,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Event-Driven AWS Architecture**: Natively integrates with AWS S3, SQS, and EventBridge to perform Zero-HTTP polling, native S3 streaming, and S3 Object Auto-Tagging (`av-status`, `av-signature`).
 - **Advanced S3 Security**: Automatically streams files from S3 without saving to disk, non-destructively merges existing tags with virus results, actively deletes infected files, and alerts security teams via AWS SNS.
 - **Advanced Malware & PDF Detection**: Pre-configured with dynamic YARA heuristics and Linux Malware Detect (Maldet) signatures natively downloaded into the Docker image. Curated to aggressively block malicious macros, phishing payloads, zero-day JavaScript embedded within PDFs, and modern web shells—closing the gaps in standard ClamAV databases without massive memory overhead.
-- **Enterprise Audit Logging**: Full support for native structured JSON logs (`log/slog`), directly indexing `scan_id`, `duration_ms`, `result`, and `client_id` instantly into CloudWatch for security dashboards.
+- **Enterprise Audit Logging & Full-Lifecycle Tracing**: Every request is assigned a `request_id` (via `RequestLoggingMiddleware`, the outermost wrapper on every route) that's threaded through every downstream log line for that request - auth (`auth_ms`), upload/download (`upload_ms`/`download_ms`), and the per-engine scan breakdown (`clamav_ms`/`yara_ms`/`maldet_ms`/`total_wall_ms`) - so any request's full lifecycle can be reconstructed from CloudWatch by `request_id` alone, without correlating timestamps across log lines by hand. Structured JSON logs (`log/slog`) also carry `scan_id`, `duration_ms`, `result`, and `tenant_id` for security dashboards.
 - **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files and on tenant-scoped S3 quarantine keys, strict HTTP body size limits (`MaxBytesReader`) plus bounded scan-engine and HTTP request/response timeouts to prevent memory/disk/connection exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
 - **SaaS Multi-Tenancy & Data Isolation**: Securely supports multi-tenant operations (e.g., multiple enterprise applications) via Cognito JWT `client_id` extraction, strictly partitioning Redis/Dragonfly caching keys and S3 Quarantine routes per tenant.
 - **Concurrent Multi-Engine Scanning**: Analyzes files simultaneously across ClamAV, YARA (Behavioral), and Linux Malware Detect (Maldet) in separate Go routines, vastly improving zero-day and web-shell detection without a 3x time penalty. Applies to every scanning endpoint, including async URL scans. Each engine runs under a bounded timeout (`SCAN_ENGINE_TIMEOUT_SECONDS`); if YARA or Maldet fails to complete (crash, missing binary, or timeout), the result explicitly flags it (`WARNING: ... engine(s) did not complete - scan coverage reduced`) instead of silently reporting a false all-clear.
@@ -319,9 +319,11 @@ If `REDIS_URL` is configured, both `/api/v1/async-scan/file` and `/api/v1/async-
 ```bash
 curl -i -H "Authorization: Bearer $JWT_TOKEN" "http://localhost:9000/api/v1/async-scan/file?scan_id=uuid-string"
 ```
-- `200 OK` with the full scan result once the background scan has completed.
-- `202 Accepted` with `{"status":"processing"}` if `scan_id` was submitted but the scan hasn't finished yet.
+- `200 OK` with the full scan result (`{"scan_id","filename","av-status","av-signature","av-timestamp"}`) once the background scan has completed.
+- `202 Accepted` with `{"scan_id","filename","av-status":"PROCESSING","av-signature":"","av-timestamp":""}` if `scan_id` was submitted but the scan hasn't finished yet - the **same schema and field names** as the completed result, just with `av-status` set to `PROCESSING`, so a client that deserializes into one fixed struct doesn't need special-case handling for the in-progress case.
 - `404 Not Found` only if `scan_id` was never submitted (or has expired past its 24h TTL) - distinct from the 202 "still running" case, so callers can safely poll-and-retry instead of treating an in-progress scan as a failure.
+
+> **Note:** `av-status` values you may see: `CLEAN`, `INFECTED`, `ERROR`, `PROCESSING`, and (encrypted-archive rejections specifically) `INFECTED` with `av-signature: "POLICY:ENCRYPTED_ARCHIVE_REJECTED"`. If your integration needs to distinguish a genuine malware detection from a policy-level rejection (encrypted content that couldn't be scanned at all), check whether `av-signature` starts with `POLICY:` rather than relying on `av-status` alone - both cases intentionally surface as `INFECTED` so they're caught by the same quarantine/deletion/alerting automation.
 
 
 ---
@@ -485,6 +487,8 @@ HTTP/1.1 202 Accepted
 | `GET`  | `/api/v1/admin/status` | Returns ClamAV engine version and internal memory stats. | `admin` JWT scope |
 | `POST` | `/api/v1/admin/reload` | Forces ClamAV to hot-reload virus databases from disk to memory. | `admin` JWT scope |
 | `POST` | `/api/v1/admin/update-signatures` | Forces `freshclam` to update virus signatures immediately in the background. | `admin` JWT scope |
+
+Every response - success or error, from every endpoint - carries an `X-Request-Id` header. Include it when reporting an issue: it's the same ID that ties together every server-side log line for that request (auth timing, upload/download timing, per-engine scan timing, and the result), so support can trace the full lifecycle of your specific request directly from CloudWatch without needing timestamps or guesswork.
 
 The API strictly adheres to the following HTTP status codes for all scan endpoints and webhook payloads:
 - `200` - Clean file (no known infections)

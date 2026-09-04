@@ -53,6 +53,9 @@ func extractToken(r *http.Request) string {
 // AuthMiddleware requires a valid JWT Bearer token
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		requestID := requestIDFromContext(r.Context())
+		authStart := time.Now()
+
 		if jwks == nil {
 			writeJSONError(w, "API is disabled (COGNITO_JWKS_URL not configured)", http.StatusForbidden)
 			return
@@ -66,15 +69,15 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		token, err := jwt.Parse(tokenStr, jwks.Keyfunc, jwt.WithValidMethods([]string{"RS256"}))
 		if err != nil || !token.Valid {
-			slog.Error("Invalid JWT", slog.Any("error", err))
+			slog.Error("Invalid JWT", slog.String("request_id", requestID), slog.Any("error", err), slog.Int64("auth_ms", time.Since(authStart).Milliseconds()))
 			writeJSONError(w, "Unauthorized (invalid token)", http.StatusUnauthorized)
 			return
 		}
 
 		expectedIssuer := os.Getenv("COGNITO_ISSUER")
 		if expectedIssuer == "" {
-			slog.Error("COGNITO_ISSUER is not configured")
-			writeJSONError(w, "Internal Server Error (auth misconfigured)", http.StatusInternalServerError)
+			slog.Error("COGNITO_ISSUER is not configured", slog.String("request_id", requestID))
+			writeJSONError(w, "Internal server error (auth misconfigured)", http.StatusInternalServerError)
 			return
 		}
 		claims, ok := token.Claims.(jwt.MapClaims)
@@ -97,6 +100,15 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// The auth-latency investigations in this codebase's history had no
+		// visibility into how long JWT/JWKS validation itself took (as
+		// opposed to the request as a whole) - this closes that gap directly.
+		slog.Info("Auth completed",
+			slog.String("request_id", requestID),
+			slog.String("tenant_id", clientID),
+			slog.Int64("auth_ms", time.Since(authStart).Milliseconds()),
+		)
+
 		ctx := context.WithValue(r.Context(), TenantContextKey, clientID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
@@ -105,6 +117,9 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // AdminAuthMiddleware requires a valid JWT with the 'admin' scope or group
 func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		requestID := requestIDFromContext(r.Context())
+		authStart := time.Now()
+
 		if jwks == nil {
 			writeJSONError(w, "Admin API is disabled (COGNITO_JWKS_URL not configured)", http.StatusNotFound)
 			return
@@ -118,7 +133,7 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		token, err := jwt.Parse(tokenStr, jwks.Keyfunc, jwt.WithValidMethods([]string{"RS256"}))
 		if err != nil || !token.Valid {
-			slog.Error("Invalid admin JWT", slog.Any("error", err))
+			slog.Error("Invalid admin JWT", slog.String("request_id", requestID), slog.Any("error", err), slog.Int64("auth_ms", time.Since(authStart).Milliseconds()))
 			writeJSONError(w, "Forbidden (invalid token)", http.StatusForbidden)
 			return
 		}
@@ -132,7 +147,7 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		expectedIssuer := os.Getenv("COGNITO_ISSUER")
 		if expectedIssuer == "" {
 			slog.Error("COGNITO_ISSUER is not configured")
-			writeJSONError(w, "Internal Server Error (auth misconfigured)", http.StatusInternalServerError)
+			writeJSONError(w, "Internal server error (auth misconfigured)", http.StatusInternalServerError)
 			return
 		}
 		iss, _ := claims["iss"].(string)
@@ -166,6 +181,12 @@ func AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			writeJSONError(w, "Forbidden (missing client_id or aud claim)", http.StatusForbidden)
 			return
 		}
+
+		slog.Info("Admin auth completed",
+			slog.String("request_id", requestID),
+			slog.String("tenant_id", clientID),
+			slog.Int64("auth_ms", time.Since(authStart).Milliseconds()),
+		)
 
 		ctx := context.WithValue(r.Context(), TenantContextKey, clientID)
 		next.ServeHTTP(w, r.WithContext(ctx))

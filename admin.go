@@ -48,10 +48,12 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestID := requestIDFromContext(r.Context())
 	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-	
+
 	versionChan, err := c.Version()
 	if err != nil {
+		slog.Error("Failed to get ClamAV version for admin status", slog.String("request_id", requestID), slog.Any("error", err))
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(AdminStatusResponse{Error: fmt.Sprintf("Failed to get version: %v", err)})
 		return
@@ -113,13 +115,14 @@ func adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	requestID := requestIDFromContext(r.Context())
 
 	c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 	err := c.Reload()
-	
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err != nil {
-		slog.Error("Failed to reload daemon", slog.Any("error", err))
+		slog.Error("Failed to reload daemon", slog.String("request_id", requestID), slog.Any("error", err))
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(AdminGenericResponse{
 			Error: fmt.Sprintf("Failed to reload daemon: %v", err),
@@ -127,7 +130,7 @@ func adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Reload command sent to ClamAV successfully")
+	slog.Info("Reload command sent to ClamAV successfully", slog.String("request_id", requestID))
 	json.NewEncoder(w).Encode(AdminGenericResponse{
 		Message: "Reload command sent to ClamAV successfully.",
 	})
@@ -138,6 +141,7 @@ func adminUpdateSignaturesHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	requestID := requestIDFromContext(r.Context())
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusAccepted)
@@ -146,15 +150,16 @@ func adminUpdateSignaturesHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go func() {
-		slog.Info("Triggering freshclam update")
+		slog.Info("Triggering freshclam update", slog.String("request_id", requestID))
+		start := time.Now()
 		cmd := exec.Command("freshclam")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			slog.Error("freshclam failed", slog.Any("error", err), slog.String("output", string(out)))
+			slog.Error("freshclam failed", slog.String("request_id", requestID), slog.Any("error", err), slog.String("output", string(out)), slog.Int64("duration_ms", time.Since(start).Milliseconds()))
 			return
 		}
-		slog.Info("freshclam succeeded", slog.String("output", string(out)))
-		
+		slog.Info("freshclam succeeded", slog.String("request_id", requestID), slog.String("output", string(out)), slog.Int64("duration_ms", time.Since(start).Milliseconds()))
+
 		// Optionally reload clamd after update
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 		c.Reload()

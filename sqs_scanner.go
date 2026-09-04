@@ -55,7 +55,8 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scanID := uuid.New().String()
-	
+	requestID := requestIDFromContext(r.Context())
+
 	tenantID, ok := r.Context().Value(TenantContextKey).(string)
 	if !ok || tenantID == "" {
 		tenantID = "default"
@@ -71,7 +72,7 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		cfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
-			slog.Error("Failed to load AWS config for S3-Event", slog.Any("error", err))
+			slog.Error("Failed to load AWS config for S3-Event", slog.String("request_id", requestID), slog.Any("error", err))
 			return
 		}
 		s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
@@ -80,7 +81,7 @@ func scanS3EventHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		snsClient := sns.NewFromConfig(cfg)
-		processS3Event(s3Client, snsClient, string(bodyBytes), scanID, tenantID)
+		processS3Event(s3Client, snsClient, string(bodyBytes), scanID, tenantID, requestID)
 	}()
 }
 
@@ -128,16 +129,19 @@ func processSQSMessage(sqsClient *sqs.Client, s3Client *s3.Client, snsClient *sn
 	scanID := uuid.New().String()
 	// For raw SQS, we'll default tenantID or extract it from S3 object metadata/tags later if needed.
 	tenantID := "default"
-	processed := processS3Event(s3Client, snsClient, body, scanID, tenantID)
+	// requestID is "" here - this path has no originating HTTP request to trace
+	// back to (it's driven by the background SQS poller), so scan_id remains
+	// the correlator for this flow.
+	processed := processS3Event(s3Client, snsClient, body, scanID, tenantID, "")
 	if processed {
 		deleteMessage(sqsClient, queueURL, receiptHandle)
 	}
 }
 
-func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, scanID string, tenantID string) bool {
+func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, scanID string, tenantID string, requestID string) bool {
 	var s3Event S3Event
 	if err := json.Unmarshal([]byte(body), &s3Event); err != nil {
-		slog.Error("Failed to parse SQS message body", slog.String("scan_id", scanID), slog.Any("error", err))
+		slog.Error("Failed to parse SQS message body", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.Any("error", err))
 		return true // Invalid JSON, delete message
 	}
 
@@ -154,9 +158,10 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		key, _ := url.QueryUnescape(record.S3.Object.Key)
 		versionId := record.S3.Object.VersionId
 
-		slog.Info("Started scanning S3 Object", 
-			slog.String("scan_id", scanID), 
-			slog.String("bucket", bucket), 
+		slog.Info("Started scanning S3 Object",
+			slog.String("request_id", requestID),
+			slog.String("scan_id", scanID),
+			slog.String("bucket", bucket),
 			slog.String("key", key),
 			slog.String("version_id", versionId),
 		)
@@ -170,10 +175,10 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		if versionId != "" {
 			objReq.VersionId = aws.String(versionId)
 		}
-		
+
 		objResp, err := s3Client.GetObject(context.TODO(), objReq)
 		if err != nil {
-			slog.Error("Failed to fetch S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
+			slog.Error("Failed to fetch S3 object", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 			continue
 		}
 
@@ -184,19 +189,21 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		limitedBody := http.MaxBytesReader(nil, objResp.Body, maxFileSizeBytes+1024*1024)
 
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-		
+
 		tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "sqs-scan-*")
 		if err != nil {
-			slog.Error("Failed to create temp file for S3 object", slog.String("scan_id", scanID), slog.Any("error", err))
+			slog.Error("Failed to create temp file for S3 object", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.Any("error", err))
 			objResp.Body.Close()
 			continue
 		}
 		tempFilePath := tempFile.Name()
 		defer os.Remove(tempFilePath)
-		
+
+		downloadStart := time.Now()
 		_, err = io.Copy(tempFile, limitedBody)
+		downloadDuration := time.Since(downloadStart)
 		if err != nil {
-			slog.Error("Failed to save S3 object to temp file", slog.String("scan_id", scanID), slog.Any("error", err))
+			slog.Error("Failed to save S3 object to temp file", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.Any("error", err))
 			tempFile.Close()
 			objResp.Body.Close()
 			continue
@@ -209,14 +216,14 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			// this reuses the existing quarantine/delete/SNS/tag pipeline
 			// below instead of needing new status-handling logic downstream.
 			tempFile.Close()
-			slog.Warn("Rejected encrypted archive from S3", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key))
+			slog.Warn("Rejected encrypted archive from S3", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key))
 			aggregatedResult = &clamd.ScanResult{Status: clamd.RES_FOUND, Description: encryptedArchiveSignature}
 		} else {
-			aggregatedResult, err = RunMultiEngineScan(tempFile, tempFilePath, key, c)
+			aggregatedResult, err = RunMultiEngineScan(tempFile, tempFilePath, key, c, requestID)
 			tempFile.Close()
 
 			if err != nil {
-				slog.Error("RunMultiEngineScan error for S3 object", slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
+				slog.Error("RunMultiEngineScan error for S3 object", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.String("bucket", bucket), slog.String("key", key), slog.Any("error", err))
 				objResp.Body.Close()
 				continue
 			}
@@ -239,13 +246,15 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		}
 		objResp.Body.Close()
 
-		slog.Info("Finished scanning S3 Object", 
+		slog.Info("Finished scanning S3 Object",
+			slog.String("request_id", requestID),
 			slog.String("scan_id", scanID),
 			slog.String("bucket", bucket),
 			slog.String("key", key),
 			slog.String("version_id", versionId),
 			slog.String("result", scanStatus),
 			slog.String("signature", scanSignature),
+			slog.Int64("download_ms", downloadDuration.Milliseconds()),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 
