@@ -208,7 +208,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.String("url", req.URL),
 			slog.String("result", formatStatus(aggregatedResult.Status)),
 			slog.String("description", aggregatedResult.Description),
-			slog.Duration("duration_ms", time.Since(start)),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 		publishAsyncResult(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID)
 	}()
@@ -321,7 +321,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.String("filename", originalName), 
 			slog.String("result", formatStatus(aggregatedResult.Status)), 
 			slog.String("description", aggregatedResult.Description),
-			slog.Duration("duration_ms", time.Since(start)),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 		publishAsyncResult(webhookURL, aggregatedResult, scanID, originalName, tenantID)
 		

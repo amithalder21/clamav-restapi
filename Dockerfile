@@ -53,13 +53,19 @@ RUN freshclam --quiet --no-dns
 # this custom .ndb is untouched by signature updates.
 COPY test-signatures/local.ndb /var/lib/clamav/local.ndb
 
-# Copy binary, certs, and YARA rules
+# Copy binary, certs, and YARA rules. Precompiling with yarac (-> compiled.yarc)
+# means the app scans against ready-to-use bytecode instead of recompiling the
+# entire multi-thousand-rule signature-base source tree from text on every
+# single scan request. The external variables must be declared here (with
+# placeholder values) so the compiled rules know about them; RunYaraScan
+# supplies the real per-scan values via the same flags at scan time.
 COPY --from=builder /src/clamav-rest /usr/bin/
 COPY ssl/server.* /etc/ssl/clamav-rest/
 RUN mkdir -p /var/lib/yara_rules && \
     git clone https://github.com/amithalder21/signature-base.git /var/lib/yara_rules/signature-base && \
     cd /var/lib/yara_rules && \
-    find ./signature-base/yara -type f \( -name "*.yar" -o -name "*.yara" \) -exec echo "include \"{}\"" \; > index.yar
+    find ./signature-base/yara -type f \( -name "*.yar" -o -name "*.yara" \) -exec echo "include \"{}\"" \; > index.yar && \
+    yarac -d filename="" -d filepath="" -d extension="" -d owner="" -d filetype="" index.yar compiled.yarc
 
 COPY entrypoint.sh /usr/bin/
 COPY update_signatures.sh /usr/bin/

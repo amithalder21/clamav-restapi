@@ -31,13 +31,17 @@ func engineTimeout() time.Duration {
 
 // EngineResult holds the output from a scanning engine
 type EngineResult struct {
-	Engine    string
+	Engine     string
 	IsInfected bool
-	Signature string
-	Error     error
+	Signature  string
+	Error      error
+	Duration   time.Duration
 }
 
-func RunYaraScan(filePath string, originalFilename string) EngineResult {
+func RunYaraScan(filePath string, originalFilename string) (result EngineResult) {
+	start := time.Now()
+	defer func() { result.Duration = time.Since(start) }()
+
 	// The staged file on disk has a randomly generated name with no extension
 	// (e.g. "sync-scan-873421"), so populate YARA's external variables from the
 	// real, original filename/extension. Without this, any signature-base rule
@@ -46,26 +50,28 @@ func RunYaraScan(filePath string, originalFilename string) EngineResult {
 	baseName := filepath.Base(originalFilename)
 	extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(baseName)), ".")
 
-	result := EngineResult{
-		Engine: "YARA",
-	}
+	result.Engine = "YARA"
 
 	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout())
 	defer cancel()
 
-	// Execute YARA with the rules directory
+	// -C loads a precompiled ruleset (yara_compiled.yarc, built at image-build
+	// time and refreshed by update_signatures.sh) instead of recompiling the
+	// entire signature-base source tree from scratch on every single scan.
+	// Compiling a multi-thousand-rule set from text is the expensive part of
+	// using YARA; loading precompiled bytecode and just scanning is fast.
 	// #nosec G204
-	cmd := exec.CommandContext(ctx, "yara",
+	cmd := exec.CommandContext(ctx, "yara", "-C",
 		"-d", "filename="+baseName,
 		"-d", "filepath="+originalFilename,
 		"-d", "extension="+extension,
 		"-d", "owner=",
 		"-d", "filetype=",
-		"/var/lib/yara_rules/index.yar", filePath)
+		"/var/lib/yara_rules/compiled.yarc", filePath)
 	output, err := cmd.CombinedOutput()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		slog.Error("YARA scan timed out", slog.String("file", filePath), slog.Duration("timeout", engineTimeout()))
+		slog.Error("YARA scan timed out", slog.String("file", filePath), slog.String("timeout", engineTimeout().String()))
 		result.Error = ctx.Err()
 		return result
 	}
@@ -101,10 +107,11 @@ func RunYaraScan(filePath string, originalFilename string) EngineResult {
 	return result
 }
 
-func RunMaldetScan(filePath string) EngineResult {
-	result := EngineResult{
-		Engine: "Maldet",
-	}
+func RunMaldetScan(filePath string) (result EngineResult) {
+	start := time.Now()
+	defer func() { result.Duration = time.Since(start) }()
+
+	result.Engine = "Maldet"
 
 	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout())
 	defer cancel()
@@ -120,7 +127,7 @@ func RunMaldetScan(filePath string) EngineResult {
 	outStr := string(output)
 
 	if ctx.Err() == context.DeadlineExceeded {
-		slog.Error("Maldet scan timed out", slog.String("file", filePath), slog.Duration("timeout", engineTimeout()))
+		slog.Error("Maldet scan timed out", slog.String("file", filePath), slog.String("timeout", engineTimeout().String()))
 		result.Error = ctx.Err()
 		return result
 	}
@@ -158,10 +165,13 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	var yaraResult EngineResult
 	var maldetResult EngineResult
 	var clamErr error
+	var clamDuration time.Duration
 
 	// Worker 1: ClamAV
 	go func() {
 		defer wg.Done()
+		clamStart := time.Now()
+		defer func() { clamDuration = time.Since(clamStart) }()
 		f.Seek(0, 0)
 		clamdResponse, err := c.ScanStream(f, abort)
 		if err != nil {
@@ -187,6 +197,16 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	}()
 
 	wg.Wait()
+
+	// Per-engine breakdown so a slow scan is diagnosable directly from logs
+	// (which engine dominated the total) instead of just seeing one combined
+	// duration and having to guess.
+	slog.Info("Multi-engine scan timing",
+		slog.String("file", filePath),
+		slog.Int64("clamav_ms", clamDuration.Milliseconds()),
+		slog.Int64("yara_ms", yaraResult.Duration.Milliseconds()),
+		slog.Int64("maldet_ms", maldetResult.Duration.Milliseconds()),
+	)
 
 	if clamErr != nil {
 		return clamResult, clamErr

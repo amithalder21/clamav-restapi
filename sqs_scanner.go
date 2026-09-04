@@ -246,7 +246,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			slog.String("version_id", versionId),
 			slog.String("result", scanStatus),
 			slog.String("signature", scanSignature),
-			slog.Duration("duration_ms", time.Since(start)),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 
 		// 3a. Retrieve existing tags to prevent overwriting user tags

@@ -23,4 +23,13 @@ cd $YARA_DIR
 # Find all .yar and .yara files and create an include list.
 find ./yara -type f \( -name "*.yar" -o -name "*.yara" \) -exec echo "include \"signature-base/{}\"" \; > /var/lib/yara_rules/index.yar
 
+# 4. Recompile YARA rules to bytecode (RunYaraScan scans against compiled.yarc,
+# not index.yar, so the app keeps using pre-update rules until this runs).
+# External variables must be re-declared here to match RunYaraScan's -d flags.
+echo "[YARA/Maldet Updater] Recompiling YARA rules to compiled.yarc..."
+cd /var/lib/yara_rules
+yarac -d filename="" -d filepath="" -d extension="" -d owner="" -d filetype="" index.yar compiled.yarc.new \
+    && mv compiled.yarc.new compiled.yarc \
+    || echo "[YARA/Maldet Updater] WARNING: yarac compile failed, keeping previous compiled.yarc"
+
 echo "[YARA/Maldet Updater] Signature update complete."
