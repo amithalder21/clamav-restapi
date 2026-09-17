@@ -240,11 +240,12 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("download_ms", downloadDuration.Milliseconds()),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
+		resultStatus := formatStatus(aggregatedResult.Status)
 		fileContent := ""
-		if includeFile {
+		if includeFile && resultStatus != "INFECTED" {
 			fileContent = readFileBase64(tempFilePath, requestID)
 		}
-		s3Path, downloadURL := persistScannedFile(formatStatus(aggregatedResult.Status), tenantID, req.URL, tempFilePath, requestID)
+		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, req.URL, tempFilePath, requestID)
 		publishAsyncResultFull(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID, s3Path, fileContent, downloadURL)
 	}()
 }
@@ -371,14 +372,15 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("upload_ms", uploadDuration.Milliseconds()),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
+		resultStatus := formatStatus(aggregatedResult.Status)
 		fileContent := ""
-		if includeFile {
+		if includeFile && resultStatus != "INFECTED" {
 			fileContent = readFileBase64(filename, requestID)
 		}
 		// Persist to S3 (clean or quarantine bucket) before publishing the
 		// webhook/poll result, so that payload can carry the resulting
 		// s3_path/download_url instead of firing them off separately.
-		s3Path, downloadURL := persistScannedFile(formatStatus(aggregatedResult.Status), tenantID, originalName, filename, requestID)
+		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, originalName, filename, requestID)
 		publishAsyncResultFull(webhookURL, aggregatedResult, scanID, originalName, tenantID, s3Path, fileContent, downloadURL)
 	}(tempFile.Name(), header.Filename)
 }

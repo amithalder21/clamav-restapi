@@ -157,7 +157,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			)
 			fileContent := ""
-			if wantsFileContent(r) {
+			if shouldEmbedFileContent(r, formatStatus(s.Status)) {
 				fileContent = readFileBase64(tempFilePath, requestID)
 			}
 			tenantID, _ := r.Context().Value(TenantContextKey).(string)

@@ -40,11 +40,16 @@ func s3ObjectKey(tenantID string, originalName string) string {
 
 // persistScannedFile uploads the file to whichever bucket is appropriate for
 // the (already-normalized, i.e. formatStatus'd) scan status - AWS_S3_CLEAN_BUCKET
-// for "CLEAN", AWS_S3_QUARANTINE_BUCKET for "INFECTED" - and returns both the
-// s3:// URI and a presigned download URL. Returns ("", "") if the relevant
-// bucket isn't configured (nothing is uploaded), the status is neither CLEAN
-// nor INFECTED (e.g. an engine ERROR - nothing meaningful to persist), or the
-// upload/presign step fails.
+// for "CLEAN", AWS_S3_QUARANTINE_BUCKET for "INFECTED" - and returns the s3://
+// URI. A presigned download URL is returned only for "CLEAN" - a confirmed
+// INFECTED file is still uploaded to quarantine (s3Path lets a security team
+// with their own S3 access retrieve it), but the API never hands back a
+// direct download link for it, so this endpoint can't become an
+// unintentional malware distribution channel for anyone who has the JSON
+// response. Returns ("", "") if the relevant bucket isn't configured
+// (nothing is uploaded), the status is neither CLEAN nor INFECTED (e.g. an
+// engine ERROR - nothing meaningful to persist), or the upload/presign step
+// fails.
 func persistScannedFile(status string, tenantID string, originalName string, filePath string, requestID string) (s3Path string, downloadURL string) {
 	var bucket string
 	switch status {
@@ -61,7 +66,11 @@ func persistScannedFile(status string, tenantID string, originalName string, fil
 	if url == "" {
 		return "", ""
 	}
-	return "s3://" + bucket + "/" + key, url
+	s3Path = "s3://" + bucket + "/" + key
+	if status == "INFECTED" {
+		return s3Path, ""
+	}
+	return s3Path, url
 }
 
 // uploadAndPresign uploads the file at filePath to bucket/key and returns a

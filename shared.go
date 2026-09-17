@@ -123,6 +123,15 @@ func wantsFileContent(r *http.Request) bool {
 	return r.URL.Query().Get("include_file") == "true"
 }
 
+// shouldEmbedFileContent is wantsFileContent plus a hard block on INFECTED
+// verdicts - embedding a confirmed-malicious file's raw bytes directly in an
+// API response (base64 or not) risks turning the API into an unintentional
+// malware distribution channel for anyone with access to the JSON payload.
+// This is intentionally unconditional: ?include_file=true never overrides it.
+func shouldEmbedFileContent(r *http.Request, status string) bool {
+	return wantsFileContent(r) && status != "INFECTED"
+}
+
 // readFileBase64 reads filePath and returns its contents base64-encoded, or
 // "" (with a logged error) if the file can't be read - a failure here should
 // never block returning the scan verdict itself.
