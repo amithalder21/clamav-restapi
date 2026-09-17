@@ -84,6 +84,15 @@ func uploadAndPresign(bucket string, key string, filePath string, requestID stri
 		if os.Getenv("AWS_ENDPOINT_URL") != "" {
 			o.UsePathStyle = true
 		}
+		// Since SDK v1.30/S3 v1.61, the default "WhenSupported" behavior signs
+		// an x-amz-checksum-mode header into every request - including
+		// presigned URLs. A plain HTTP client (curl, browser fetch, most
+		// consumer code) won't send that exact header back, so the resulting
+		// download_url fails with SignatureDoesNotMatch for anyone not using
+		// the same AWS SDK. "WhenRequired" keeps checksums opt-in instead of
+		// baking them into every signature.
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 
 	f, err := os.Open(filePath)
