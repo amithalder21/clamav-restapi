@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -97,6 +98,41 @@ type ScanResponse struct {
 	Status      string `json:"av-status"`
 	Description string `json:"av-signature"`
 	Timestamp   string `json:"av-timestamp"`
+	// S3Path is the full s3://bucket/key URI. Always populated for the
+	// S3/SQS-triggered scan flow (the file already has a real S3 location).
+	// For direct upload/URL scans (sync and async), populated only if the
+	// relevant bucket (AWS_S3_CLEAN_BUCKET/AWS_S3_QUARANTINE_BUCKET) is
+	// configured - otherwise nothing is uploaded and this stays empty.
+	S3Path string `json:"s3_path,omitempty"`
+	// FileContent is the base64-encoded file body. Opt-in only (callers pass
+	// ?include_file=true) - embedding every scanned file's bytes in every
+	// response by default would inflate every payload by ~33% (base64
+	// overhead) for callers who never asked for it, and could be significant
+	// for anything near the configured MAX_FILE_SIZE ceiling.
+	FileContent string `json:"file_content,omitempty"`
+	// DownloadURL is a presigned, time-limited S3 URL for the scanned file
+	// (CLEAN -> AWS_S3_CLEAN_BUCKET, INFECTED -> AWS_S3_QUARANTINE_BUCKET).
+	// Empty if the relevant bucket isn't configured, or the upload/presign
+	// step failed - a storage problem never blocks the verdict itself.
+	DownloadURL string `json:"download_url,omitempty"`
+}
+
+// wantsFileContent reports whether the caller opted into having the scanned
+// file's bytes embedded in the response (?include_file=true). Off by default.
+func wantsFileContent(r *http.Request) bool {
+	return r.URL.Query().Get("include_file") == "true"
+}
+
+// readFileBase64 reads filePath and returns its contents base64-encoded, or
+// "" (with a logged error) if the file can't be read - a failure here should
+// never block returning the scan verdict itself.
+func readFileBase64(filePath string, requestID string) string {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		slog.Error("Failed to read file for include_file response", slog.String("request_id", requestID), slog.String("file", filePath), slog.Any("error", err))
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(data)
 }
 
 // formatStatus normalizes the raw ClamAV status into a consistent API status
@@ -111,10 +147,20 @@ func formatStatus(status string) string {
 	}
 }
 
-// writeScanResponse writes a standardized JSON response and status code
-func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename string) {
+// ExtraFields bundles the optional ScanResponse fields (S3Path, FileContent,
+// DownloadURL) so writeScanResponse/formatScanResponse don't keep growing
+// positional string parameters as more optional fields get added. Zero value
+// (all fields "") omits all three.
+type ExtraFields struct {
+	S3Path      string
+	FileContent string
+	DownloadURL string
+}
+
+// writeScanResponse writes a standardized JSON response and status code.
+func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename string, extra ExtraFields) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	
+
 	switch s.Status {
 	case clamd.RES_OK:
 		w.WriteHeader(http.StatusOK)
@@ -127,20 +173,23 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 	default:
 		w.WriteHeader(http.StatusNotImplemented)
 	}
-	
+
 	normalizedStatus := formatStatus(s.Status)
 	signature := s.Description
 	if signature == "" {
 		signature = "CLEAN"
 	}
-	
+
 	json.NewEncoder(w).Encode(ScanResponse{
 		Filename:    filename,
 		Status:      normalizedStatus,
 		Description: signature,
 		Timestamp:   time.Now().UTC().Format("2006/01/02 15:04:05 UTC"),
+		S3Path:      extra.S3Path,
+		FileContent: extra.FileContent,
+		DownloadURL: extra.DownloadURL,
 	})
-	
+
 	slog.Info("Scan result",
 		slog.String("filename", filename),
 		slog.String("result", normalizedStatus),
@@ -148,8 +197,9 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 	)
 }
 
-// formatScanResponse returns the JSON string and HTTP status code without writing to a ResponseWriter (useful for webhooks)
-func formatScanResponse(s *clamd.ScanResult, scanID string, filename string) (string, int) {
+// formatScanResponse returns the JSON string and HTTP status code without
+// writing to a ResponseWriter (useful for webhooks).
+func formatScanResponse(s *clamd.ScanResult, scanID string, filename string, extra ExtraFields) (string, int) {
 	normalizedStatus := formatStatus(s.Status)
 	signature := s.Description
 	if signature == "" {
@@ -161,6 +211,9 @@ func formatScanResponse(s *clamd.ScanResult, scanID string, filename string) (st
 		Status:      normalizedStatus,
 		Description: signature,
 		Timestamp:   time.Now().UTC().Format("2006/01/02 15:04:05 UTC"),
+		S3Path:      extra.S3Path,
+		FileContent: extra.FileContent,
+		DownloadURL: extra.DownloadURL,
 	})
 	respJson := string(respBytes)
 	statusCode := http.StatusNotImplemented

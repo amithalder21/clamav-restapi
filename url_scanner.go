@@ -38,6 +38,13 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestID := requestIDFromContext(r.Context())
+
+	if !isFileTypeAllowed(extensionCheckName(req.URL)) {
+		slog.Warn("Rejected disallowed file type", slog.String("request_id", requestID), slog.String("url", req.URL))
+		writeJSONError(w, disallowedFileTypeMessage, http.StatusUnsupportedMediaType)
+		return
+	}
+
 	slog.Info("Started downloading and scanning URL", slog.String("request_id", requestID), slog.String("url", req.URL))
 	start := time.Now()
 
@@ -108,5 +115,11 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("download_ms", downloadDuration.Milliseconds()),
 		slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 	)
-	writeScanResponse(w, s, req.URL)
+	fileContent := ""
+	if wantsFileContent(r) {
+		fileContent = readFileBase64(tempFilePath, requestID)
+	}
+	tenantID, _ := r.Context().Value(TenantContextKey).(string)
+	s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, req.URL, tempFilePath, requestID)
+	writeScanResponse(w, s, req.URL, ExtraFields{S3Path: s3Path, FileContent: fileContent, DownloadURL: downloadURL})
 }

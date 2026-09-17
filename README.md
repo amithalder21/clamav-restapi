@@ -144,7 +144,9 @@ Below is the complete list of available environment variables that can be used t
 | `ASYNC_TEMP_DIR` | The temp directory to use when saving multipart uploads for async scanning (e.g., `/tmp`). |
 | `SCAN_ENGINE_TIMEOUT_SECONDS` | Maximum time (in seconds) a single YARA or Maldet invocation may run before being killed and reported as a failed engine - Default `300` (5 minutes). |
 | `AWS_S3_DELETE_INFECTED` | If `true`, the scanner will actively delete infected files from S3. |
-| `AWS_S3_QUARANTINE_BUCKET`| If set to a bucket name, infected files will be copied here and deleted from the source bucket. |
+| `AWS_S3_QUARANTINE_BUCKET`| If set to a bucket name, infected files will be copied here and deleted from the source bucket. On the sync/async scan APIs (not just the S3-event flow), also used as the upload target for `INFECTED` verdicts so a `download_url` can be returned - see "Optional response fields" below. |
+| `AWS_S3_CLEAN_BUCKET` | If set to a bucket name, files scanned as `CLEAN` via the sync/async scan APIs are uploaded here so a `download_url` can be returned alongside the verdict. Optional - if unset, `CLEAN` results simply omit `s3_path`/`download_url`. |
+| `AWS_S3_PRESIGNED_URL_TTL_SECONDS` | How long a `download_url` presigned link stays valid, in seconds. Default `900` (15 minutes). |
 | `AWS_SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
 | `AWS_SNS_ONLY_INFECTED` | If `true`, the scanner will only publish to SNS if a file is infected. |
 | `AWS_REGION` | The AWS Region your queue and bucket reside in (e.g. `us-east-1`). |
@@ -156,6 +158,7 @@ Below is the complete list of available environment variables that can be used t
 | `APP_CLAMD_ENDPOINT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `200M` |
 | `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `100M` |
+| `ALLOWED_FILE_TYPES` | Comma-separated allowlist of file extensions accepted on `/api/v1/scan/file`, `/api/v1/scan/url`, `/api/v1/async-scan/file`, and `/api/v1/async-scan/url` (e.g. `pdf,docx,xlsx,zip`) - matched case-insensitively against the submitted filename/URL, checked before any scan engine runs. A disallowed type is rejected with `415`. Unset (default) means no restriction - every file type is accepted, matching prior behavior. Extension-based only, not content/magic-byte verification - a file renamed to a permitted extension still passes this check and reaches the scan engines as usual. |
 | `MAX_RECURSION` | How many nested archives to scan - Default `32` |
 | `MAX_FILES` | Max number of files to extract from archives - Default `50000` |
 | `MAX_EMBEDDEDPE` | Maximum file size for embedded PE - Default `10M` |
@@ -501,6 +504,12 @@ The API strictly adheres to the following HTTP status codes for all scan endpoin
 > **Note on encrypted archives:** `/api/v1/scan/file`, `/api/v1/scan/url`, and `/api/v1/async-scan/file` (which stages the upload to disk before responding) return `415` directly. `/api/v1/async-scan/url` and the S3/SQS event pipeline already commit their `202`/event-ack response before the content is fetched, so for those the rejection instead surfaces as `av-status: INFECTED` with `av-signature: POLICY:ENCRYPTED_ARCHIVE_REJECTED` via the webhook/S3 tag - reusing the existing quarantine/delete/SNS-alert automation rather than adding a new status value those integrations wouldn't recognize. Detection currently covers password-protected ZIP only (the confirmed bypass in the 2026-09-01 AppSec test); RAR/7z encryption detection is a known follow-up.
 
 > **Note on degraded scans:** if YARA or Maldet fails to complete for a given scan (crash, missing binary, or exceeding `SCAN_ENGINE_TIMEOUT_SECONDS`), the HTTP status code still reflects the engines that *did* complete, but the `av-signature` field is appended with `WARNING: <Engine> engine(s) did not complete - scan coverage reduced` so callers can detect and act on reduced detection coverage rather than trusting a false all-clear.
+
+> **Optional response fields - `s3_path`, `download_url`, and `file_content`:** every scan response can additionally carry `s3_path` (the `s3://bucket/key` URI of the scanned file), `download_url` (a presigned, time-limited HTTPS link to fetch that same object - not natively single-use, valid for `AWS_S3_PRESIGNED_URL_TTL_SECONDS`, default 15 minutes), and `file_content` (the scanned file's bytes, base64-encoded).
+>
+> On the S3/SQS event-driven flow, `s3_path` is populated automatically (the file already lives in S3) but `download_url` is intentionally omitted - a consumer with direct bucket access doesn't need a presigned link. On the four sync/async scan APIs (`/api/v1/scan/file`, `/api/v1/scan/url`, `/api/v1/async-scan/file`, `/api/v1/async-scan/url`), both `s3_path` and `download_url` are populated whenever the relevant bucket is configured - `AWS_S3_CLEAN_BUCKET` for a `CLEAN` verdict, `AWS_S3_QUARANTINE_BUCKET` for `INFECTED` - and omitted if that bucket isn't set, since nothing is uploaded in that case. This adds upload/presign latency to those requests, most noticeably to synchronous `CLEAN` scans, which otherwise return as soon as the engines finish.
+>
+> `file_content` is opt-in only - add `?include_file=true` to the request (works on all four sync/async endpoints) to have it embedded in the response/webhook payload. It's off by default because base64 inflates the payload by roughly a third, and is deliberately never populated for S3-triggered scans - a consumer that wants the bytes there can fetch them directly from `s3_path`/`download_url` instead of receiving them re-embedded in every webhook call.
 
 ---
 

@@ -374,7 +374,16 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 		// 6. Send Webhook
 		webhookURL := getWebhookURL(objResp, opts["APP_WEBHOOK_URL"])
 		if clamdResult != nil {
-			publishAsyncResult(webhookURL, clamdResult, scanID, "s3://"+bucket+"/"+key, tenantID)
+			// filename already carries the s3:// URI for backward compatibility
+			// with existing consumers; s3_path is the same value in its own
+			// explicit field. fileContent is intentionally omitted here - the
+			// file already lives in S3, so a consumer wanting the bytes can
+			// fetch them directly from s3_path rather than re-receiving them
+			// embedded in every webhook payload. downloadURL is also omitted -
+			// this S3-event flow is out of scope for presigned download links,
+			// which are only generated for the sync/async scan APIs.
+			s3Path := "s3://" + bucket + "/" + key
+			publishAsyncResultFull(webhookURL, clamdResult, scanID, s3Path, tenantID, s3Path, "", "")
 		}
 	}
 	

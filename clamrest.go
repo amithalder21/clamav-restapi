@@ -89,6 +89,13 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			requestID := requestIDFromContext(r.Context())
 			start := time.Now()
 			slog.Info("Started scanning file", slog.String("request_id", requestID), slog.String("filename", part.FileName()))
+
+			if !isFileTypeAllowed(part.FileName()) {
+				slog.Warn("Rejected disallowed file type", slog.String("request_id", requestID), slog.String("filename", part.FileName()))
+				writeJSONError(w, disallowedFileTypeMessage, http.StatusUnsupportedMediaType)
+				return
+			}
+
 			interceptReader := &ErrorInterceptingReader{Reader: part}
 
 			tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "sync-scan-*")
@@ -149,7 +156,13 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				slog.Int64("upload_ms", uploadDuration.Milliseconds()),
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			)
-			writeScanResponse(w, s, part.FileName())
+			fileContent := ""
+			if wantsFileContent(r) {
+				fileContent = readFileBase64(tempFilePath, requestID)
+			}
+			tenantID, _ := r.Context().Value(TenantContextKey).(string)
+			s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, part.FileName(), tempFilePath, requestID)
+			writeScanResponse(w, s, part.FileName(), ExtraFields{S3Path: s3Path, FileContent: fileContent, DownloadURL: downloadURL})
 			break
 			return // Process only the first uploaded file to prevent invalid JSON streaming
 		}

@@ -9,12 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/dutchcoders/go-clamd"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -66,9 +62,19 @@ func markScanProcessing(tenantID, scanID, filename string) {
 	}
 }
 
+// publishAsyncResult delivers a result with no s3_path/file_content/download_url -
+// used by every error path, where there's no meaningful S3 location or file
+// content to offer alongside the error description.
 func publishAsyncResult(webhookURL string, s *clamd.ScanResult, scanID string, filename string, tenantID string) {
-	payload, _ := formatScanResponse(s, scanID, filename)
-	
+	publishAsyncResultFull(webhookURL, s, scanID, filename, tenantID, "", "", "")
+}
+
+// publishAsyncResultFull is publishAsyncResult plus s3Path/fileContent/downloadURL -
+// used by the actual scan-completed paths, which may have some or all to offer
+// (see ScanResponse for what each field means and when it's populated).
+func publishAsyncResultFull(webhookURL string, s *clamd.ScanResult, scanID string, filename string, tenantID string, s3Path string, fileContent string, downloadURL string) {
+	payload, _ := formatScanResponse(s, scanID, filename, ExtraFields{S3Path: s3Path, FileContent: fileContent, DownloadURL: downloadURL})
+
 	// Fetch Tenant Config from Redis for dynamic Webhook URL if available
 	if redisClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -131,7 +137,14 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "URL is required", http.StatusBadRequest)
 		return
 	}
-	
+
+	requestID := requestIDFromContext(r.Context())
+	if !isFileTypeAllowed(extensionCheckName(req.URL)) {
+		slog.Warn("Rejected disallowed file type", slog.String("request_id", requestID), slog.String("url", req.URL))
+		writeJSONError(w, disallowedFileTypeMessage, http.StatusUnsupportedMediaType)
+		return
+	}
+
 	if req.WebhookURL == "" {
 		req.WebhookURL = opts["APP_WEBHOOK_URL"]
 	}
@@ -140,7 +153,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 	if !ok || tenantID == "" {
 		tenantID = "default"
 	}
-	requestID := requestIDFromContext(r.Context())
+	includeFile := wantsFileContent(r)
 
 	scanID := uuid.New().String()
 	markScanProcessing(tenantID, scanID, req.URL)
@@ -227,7 +240,12 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("download_ms", downloadDuration.Milliseconds()),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
-		publishAsyncResult(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID)
+		fileContent := ""
+		if includeFile {
+			fileContent = readFileBase64(tempFilePath, requestID)
+		}
+		s3Path, downloadURL := persistScannedFile(formatStatus(aggregatedResult.Status), tenantID, req.URL, tempFilePath, requestID)
+		publishAsyncResultFull(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID, s3Path, fileContent, downloadURL)
 	}()
 }
 
@@ -267,12 +285,20 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Missing 'file' field", http.StatusBadRequest)
 		return
 	}
-	
+
+	requestID := requestIDFromContext(r.Context())
+	if !isFileTypeAllowed(header.Filename) {
+		file.Close()
+		slog.Warn("Rejected disallowed file type", slog.String("request_id", requestID), slog.String("filename", header.Filename))
+		writeJSONError(w, disallowedFileTypeMessage, http.StatusUnsupportedMediaType)
+		return
+	}
+
 	tenantID, ok := r.Context().Value(TenantContextKey).(string)
 	if !ok || tenantID == "" {
 		tenantID = "default"
 	}
-	requestID := requestIDFromContext(r.Context())
+	includeFile := wantsFileContent(r)
 
 	// Create a temp file to hold the upload so we can return HTTP 202 immediately and free the connection
 	tempFile, err := os.CreateTemp(opts["ASYNC_TEMP_DIR"], "clamav-async-upload-*")
@@ -345,41 +371,15 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("upload_ms", uploadDuration.Milliseconds()),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
-		publishAsyncResult(webhookURL, aggregatedResult, scanID, originalName, tenantID)
-
-		if aggregatedResult.Status == clamd.RES_FOUND {
-				quarantineBucket := opts["AWS_S3_QUARANTINE_BUCKET"]
-				if quarantineBucket != "" {
-					cfg, err := config.LoadDefaultConfig(context.TODO())
-					if err != nil {
-						slog.Error("Failed to load AWS config for quarantine", slog.String("request_id", requestID), slog.Any("error", err))
-					} else {
-						s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-							if os.Getenv("AWS_ENDPOINT_URL") != "" {
-								o.UsePathStyle = true
-							}
-						})
-						f.Seek(0, 0)
-						// Partition Quarantine by Tenant ID and Date
-						dateStr := time.Now().Format("2006/01/02")
-						// originalName is the caller-supplied multipart filename - sanitize
-						// with filepath.Base so a crafted name (e.g. containing "../") can't
-						// escape the tenant/date-scoped key prefix used for isolation.
-						safeName := filepath.Base(originalName)
-						key := tenantID + "/" + dateStr + "/" + scanID + "-" + safeName
-						_, err = s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
-							Bucket: aws.String(quarantineBucket),
-							Key:    aws.String(key),
-							Body:   f,
-						})
-						if err != nil {
-							slog.Error("Failed to upload to quarantine bucket", slog.String("request_id", requestID), slog.String("bucket", quarantineBucket), slog.String("key", key), slog.String("tenant_id", tenantID), slog.Any("error", err))
-						} else {
-							slog.Info("Successfully uploaded infected file to quarantine bucket", slog.String("request_id", requestID), slog.String("bucket", quarantineBucket), slog.String("key", key), slog.String("tenant_id", tenantID))
-						}
-					}
-				}
-			}
+		fileContent := ""
+		if includeFile {
+			fileContent = readFileBase64(filename, requestID)
+		}
+		// Persist to S3 (clean or quarantine bucket) before publishing the
+		// webhook/poll result, so that payload can carry the resulting
+		// s3_path/download_url instead of firing them off separately.
+		s3Path, downloadURL := persistScannedFile(formatStatus(aggregatedResult.Status), tenantID, originalName, filename, requestID)
+		publishAsyncResultFull(webhookURL, aggregatedResult, scanID, originalName, tenantID, s3Path, fileContent, downloadURL)
 	}(tempFile.Name(), header.Filename)
 }
 
