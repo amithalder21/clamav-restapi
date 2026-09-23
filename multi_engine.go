@@ -160,11 +160,12 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	wallStart := time.Now()
 	var abort chan bool
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	var clamResult *clamd.ScanResult
 	var yaraResult EngineResult
 	var maldetResult EngineResult
+	var malwareBazaarResult EngineResult
 	var clamErr error
 	var clamDuration time.Duration
 
@@ -197,6 +198,13 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 		maldetResult = RunMaldetScan(filePath, requestID)
 	}()
 
+	// Worker 4: MalwareBazaar hash-reputation lookup - a no-op (returns
+	// immediately) unless MALWAREBAZAAR_API_KEY is configured.
+	go func() {
+		defer wg.Done()
+		malwareBazaarResult = RunMalwareBazaarLookup(filePath, requestID)
+	}()
+
 	wg.Wait()
 
 	// Per-engine breakdown so a slow scan is diagnosable directly from logs
@@ -213,6 +221,7 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 		slog.Int64("clamav_ms", clamDuration.Milliseconds()),
 		slog.Int64("yara_ms", yaraResult.Duration.Milliseconds()),
 		slog.Int64("maldet_ms", maldetResult.Duration.Milliseconds()),
+		slog.Int64("malwarebazaar_ms", malwareBazaarResult.Duration.Milliseconds()),
 	)
 
 	if clamErr != nil {
@@ -243,6 +252,20 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	} else if maldetResult.IsInfected {
 		finalStatus = clamd.RES_FOUND
 		descriptions = append(descriptions, "Maldet:" + maldetResult.Signature)
+	}
+
+	// MalwareBazaar is opt-in (MALWAREBAZAAR_API_KEY unset -> Error is nil
+	// and IsInfected is false, so it silently contributes nothing here,
+	// exactly like every other optional feature in this codebase). When
+	// enabled, a confirmed hash match is an authoritative external
+	// signature hit, not a heuristic - it's aggregated the same as the
+	// local engines, including a lookup failure counting as degraded
+	// coverage rather than being silently ignored.
+	if malwareBazaarResult.Error != nil {
+		warnings = append(warnings, "MalwareBazaar")
+	} else if malwareBazaarResult.IsInfected {
+		finalStatus = clamd.RES_FOUND
+		descriptions = append(descriptions, malwareBazaarResult.Signature)
 	}
 
 	finalDescription := "CLEAN"
