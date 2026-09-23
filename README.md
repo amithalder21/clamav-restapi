@@ -22,7 +22,7 @@ It is designed to be highly scalable, container-friendly (e.g., ECS Fargate), an
 - **Event-Driven AWS Architecture**: Natively integrates with AWS S3, SQS, and EventBridge to perform Zero-HTTP polling, native S3 streaming, and S3 Object Auto-Tagging (`av-status`, `av-signature`).
 - **Advanced S3 Security**: Automatically streams files from S3 without saving to disk, non-destructively merges existing tags with virus results, actively deletes infected files, and alerts security teams via AWS SNS.
 - **Advanced Malware & PDF Detection**: Pre-configured with dynamic YARA heuristics and Linux Malware Detect (Maldet) signatures natively downloaded into the Docker image. Curated to aggressively block malicious macros, phishing payloads, zero-day JavaScript embedded within PDFs, and modern web shells—closing the gaps in standard ClamAV databases without massive memory overhead.
-- **Enterprise Audit Logging & Full-Lifecycle Tracing**: Every request is assigned a `request_id` (via `RequestLoggingMiddleware`, the outermost wrapper on every route) that's threaded through every downstream log line for that request - auth (`auth_ms`), upload/download (`upload_ms`/`download_ms`), and the per-engine scan breakdown (`clamav_ms`/`yara_ms`/`maldet_ms`/`total_wall_ms`) - so any request's full lifecycle can be reconstructed from CloudWatch by `request_id` alone, without correlating timestamps across log lines by hand. Structured JSON logs (`log/slog`) also carry `scan_id`, `duration_ms`, `result`, and `tenant_id` for security dashboards.
+- **Enterprise Audit Logging & Full-Lifecycle Tracing**: Every request is assigned a `request_id` (via `RequestLoggingMiddleware`, the outermost wrapper on every route) that's threaded through every downstream log line for that request - auth (`auth_ms`), upload/download (`upload_ms`/`download_ms`), and the per-engine scan breakdown (`clamav_ms`/`yara_ms`/`maldet_ms`/`malwarebazaar_ms`/`total_wall_ms`) - so any request's full lifecycle can be reconstructed from CloudWatch by `request_id` alone, without correlating timestamps across log lines by hand. Structured JSON logs (`log/slog`) also carry `scan_id`, `duration_ms`, `result`, and `tenant_id` for security dashboards.
 - **Security Hardening**: Built-in protection against Server-Side Request Forgery (SSRF) for remote URL scanning, Path Traversal on local files and on tenant-scoped S3 quarantine keys, strict HTTP body size limits (`MaxBytesReader`) plus bounded scan-engine and HTTP request/response timeouts to prevent memory/disk/connection exhaustion Denial of Service (DoS), and JSON-injection safe SNS payloads.
 - **SaaS Multi-Tenancy & Data Isolation**: Securely supports multi-tenant operations (e.g., multiple enterprise applications) via Cognito JWT `client_id` extraction, strictly partitioning Redis/Dragonfly caching keys and S3 Quarantine routes per tenant.
 - **Concurrent Multi-Engine Scanning**: Analyzes files simultaneously across ClamAV, YARA (Behavioral), Linux Malware Detect (Maldet), and (optionally) a [MalwareBazaar](https://bazaar.abuse.ch/) hash-reputation lookup, in separate Go routines, vastly improving zero-day and web-shell detection without a Nx time penalty. Applies to every scanning endpoint, including async URL scans. Each engine runs under a bounded timeout (`SCAN_ENGINE_TIMEOUT_SECONDS`); if any engine fails to complete (crash, missing binary, timeout, or - for MalwareBazaar - an API/network failure), the result explicitly flags it (`WARNING: ... engine(s) did not complete - scan coverage reduced`) instead of silently reporting a false all-clear.
@@ -79,7 +79,7 @@ sequenceDiagram
         Note over Client, Webhook: 2. Asynchronous File/URL Scan
         Client->>ClamAV: POST /api/v1/async-scan/file or /api/v1/async-scan/url
         ClamAV-->>Client: HTTP 202 Accepted (Scan ID)
-        ClamAV->>ClamAV: Downloads & Analyzes in background (ClamAV, YARA, Maldet)
+        ClamAV->>ClamAV: Downloads & Analyzes in background (ClamAV, YARA, Maldet, +MalwareBazaar if configured)
         ClamAV->>Webhook: POSTs JSON Result to webhook_url
     end
 
@@ -89,7 +89,7 @@ sequenceDiagram
         EventBridge->>ClamAV: POST /api/v1/events/s3 (S3 JSON Event)
         ClamAV-->>EventBridge: HTTP 202 Accepted
         ClamAV->>S3: Streams S3 Object (s3:GetObject)
-        ClamAV->>ClamAV: Analyzes File (ClamAV, YARA, Maldet)
+        ClamAV->>ClamAV: Analyzes File (ClamAV, YARA, Maldet, +MalwareBazaar if configured)
         ClamAV->>S3: Merges & Applies Tags (s3:PutObjectTagging)
         alt If INFECTED & AWS_S3_QUARANTINE_BUCKET is set
             ClamAV->>QuarantineS3: CopyObject (moves file & tags to quarantine: /<tenant_id>/...)
@@ -537,9 +537,11 @@ docker run -p 9000:9000 -p 9443:9443 -itd --name clamav-restapi amithalder/clama
 This project includes a full Docker Compose test rig that spins up the API, a mock webhook receiver, and LocalStack (for S3 and SQS testing). It allows you to run end-to-end regression tests locally, ensuring features like async scanning, SQS event polling, S3 object tagging, and SSRF protections work properly.
 
 #### What it spins up
-- **LocalStack** — fake S3 + SQS + SNS on `http://localhost:4566`. The init script auto-creates an S3 bucket (`clamrest-uploads`), an SQS queue (`clamrest-scan-queue`) wired to receive `ObjectCreated` events from that bucket, and an SNS topic (`clamrest-scan-results`).
+- **LocalStack** — fake S3 + SQS + SNS on `http://localhost:4566`. The init script auto-creates an S3 event-source bucket (`clamrest-uploads`), a quarantine bucket (`clamrest-quarantine`), a clean-file bucket (`clamrest-clean` - for testing `AWS_S3_CLEAN_BUCKET`/`download_url`), an SQS queue (`clamrest-scan-queue`) wired to receive `ObjectCreated` events from `clamrest-uploads`, and an SNS topic (`clamrest-scan-results`).
 - **webhook-receiver** — a tiny Python listener on `:8080` that logs every webhook POST the app sends it, so you can verify `/api/v1/async-scan/file`, `/api/v1/async-scan/url`, and S3-triggered scans actually deliver results.
-- **clamav-rest** — your app, built from the existing `Dockerfile`, pointed at LocalStack via `AWS_ENDPOINT_URL` and dummy credentials.
+- **dragonfly** — a Redis-compatible cache on `:6379`, used for tenant webhook config caching, async scan-result polling, and MalwareBazaar hash-lookup caching.
+- **cognito-local** — an in-memory Cognito emulator on `:9229` for issuing real, verifiable JWTs without needing an actual AWS account. `tests/test-endpoints.sh`/`test-multi-tenant.sh` provision a pool, app client, and admin user against it automatically on each run.
+- **clamav-rest** — your app, built from the existing `Dockerfile`, pointed at LocalStack via `AWS_ENDPOINT_URL`, Dragonfly via `REDIS_URL`, and cognito-local via `COGNITO_JWKS_URL`/`COGNITO_ISSUER`, all with dummy/local credentials.
 
 #### Running the Test Suite
 
@@ -578,6 +580,9 @@ docker compose -f docker-compose.local.yml down -v
 | 12 | `POST /api/v1/admin/update-signatures` | freshclam triggered → 202 |
 | 13 | `POST /api/v1/admin/reload` | clamd reloaded → 200 |
 | 14 | S3 upload → SQS → scan → tag → webhook | full async pipeline |
+| 15 | `POST /api/v1/events/s3` | EventBridge-style S3 event → clean file tagged CLEAN |
+
+> **Coverage gap:** these scripts predate the `AWS_S3_CLEAN_BUCKET`/`download_url`, `ALLOWED_FILE_TYPES`, MalwareBazaar, and INFECTED-verdict `download_url`/`file_content` suppression features - they've been verified manually (against this same local stack and, separately, a live deployment) but aren't yet exercised by an automated script here. Worth adding dedicated cases if this test rig is going to stay the source of truth for regressions.
 
 #### Running the Go unit tests
 

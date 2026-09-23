@@ -20,6 +20,9 @@ awslocal s3 mb "s3://$BUCKET"
 echo "[init] Creating S3 Quarantine bucket: clamrest-quarantine"
 awslocal s3 mb "s3://clamrest-quarantine"
 
+echo "[init] Creating S3 Clean bucket: clamrest-clean"
+awslocal s3 mb "s3://clamrest-clean"
+
 echo "[init] Creating SQS queue: $QUEUE_NAME"
 awslocal sqs create-queue --queue-name "$QUEUE_NAME"
 QUEUE_URL=$(awslocal sqs get-queue-url --queue-name "$QUEUE_NAME" --query 'QueueUrl' --output text)

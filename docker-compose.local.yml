@@ -82,9 +82,15 @@ services:
       - AWS_SNS_ONLY_INFECTED=false
       - AWS_S3_DELETE_INFECTED=true
       - AWS_S3_QUARANTINE_BUCKET=clamrest-quarantine
+      - AWS_S3_CLEAN_BUCKET=clamrest-clean
       - APP_WEBHOOK_URL=http://webhook-receiver:8080/webhook
       - APP_ALLOW_PRIVATE_IPS=true
       - REDIS_URL=redis://dragonfly:6379
+
+      # --- Optional: MalwareBazaar hash-reputation check ---
+      # Pass through from the host shell (export MALWAREBAZAAR_API_KEY=... before
+      # `docker compose up`) rather than hardcoding a key into this file.
+      - MALWAREBAZAAR_API_KEY=${MALWAREBAZAAR_API_KEY:-}
 
   cognito-local:
     image: jagregory/cognito-local:latest
