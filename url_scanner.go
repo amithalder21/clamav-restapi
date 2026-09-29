@@ -115,11 +115,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("download_ms", downloadDuration.Milliseconds()),
 		slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 	)
-	fileContent := ""
-	if shouldEmbedFileContent(r, formatStatus(s.Status)) {
-		fileContent = readFileBase64(tempFilePath, requestID)
-	}
 	tenantID, _ := r.Context().Value(TenantContextKey).(string)
-	s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, req.URL, tempFilePath, requestID)
-	writeScanResponse(w, s, req.URL, ExtraFields{S3Path: s3Path, FileContent: fileContent, DownloadURL: downloadURL})
+	s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, req.URL, tempFilePath, requestID, "", s.Description)
+	writeScanResponse(w, s, req.URL, ExtraFields{S3Path: s3Path, DownloadURL: downloadURL})
 }

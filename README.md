@@ -150,6 +150,7 @@ Below is the complete list of available environment variables that can be used t
 | `AWS_S3_QUARANTINE_BUCKET`| If set to a bucket name, infected files will be copied here and deleted from the source bucket. On the sync/async scan APIs (not just the S3-event flow), also used as the upload target for `INFECTED` verdicts - see "Optional response fields" below for why `download_url` is intentionally *not* returned for those. |
 | `AWS_S3_CLEAN_BUCKET` | If set to a bucket name, files scanned as `CLEAN` via the sync/async scan APIs are uploaded here so a `download_url` can be returned alongside the verdict. Optional - if unset, `CLEAN` results simply omit `s3_path`/`download_url`. |
 | `AWS_S3_PRESIGNED_URL_TTL_SECONDS` | How long a `download_url` presigned link stays valid, in seconds. Default `900` (15 minutes). |
+| `AWS_S3_CLEAN_FILE_TTL_HOURS` | Informational only - used to compute the `file_expires_at` timestamp written into each CLEAN upload's audit record. Does **not** itself delete anything; the actual deletion is an S3 Lifecycle Expiration rule you configure on `AWS_S3_CLEAN_BUCKET` scoped to the `files/` prefix (S3 Lifecycle is day-granularity only). Keep this in sync with whatever that rule is actually set to. Default `24` (1 day). |
 | `AWS_SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
 | `AWS_SNS_ONLY_INFECTED` | If `true`, the scanner will only publish to SNS if a file is infected. |
 | `AWS_REGION` | The AWS Region your queue and bucket reside in (e.g. `us-east-1`). |
@@ -359,6 +360,31 @@ Regardless of which method you use, the integration handles the following native
 - **Auto-Deletion**: Alternatively, if you set `AWS_S3_DELETE_INFECTED=true` without a quarantine bucket, the container will simply `s3.DeleteObject` the very millisecond a virus is detected.
 - **Webhook Routing**: To dynamically route a webhook when an S3 file is scanned, set the `x-amz-meta-webhook-url` object metadata when you upload the file to S3, or set the global `APP_WEBHOOK_URL` environment variable.
 
+### Clean-Bucket Retention (`AWS_S3_CLEAN_BUCKET`)
+
+The app writes CLEAN files under a `files/` prefix and their audit records under a separate `audit/` prefix (see "Optional response fields" above) - but the app itself does **not** delete anything. Automatic deletion is an S3-side configuration you apply once per bucket, scoped to `files/` only so `audit/` is never touched:
+
+```bash
+cat > lifecycle.json << 'EOF'
+{
+  "Rules": [
+    {
+      "ID": "expire-clean-files-after-1-day",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "files/" },
+      "Expiration": { "Days": 1 }
+    }
+  ]
+}
+EOF
+
+aws s3api put-bucket-lifecycle-configuration \
+  --bucket <your-clean-bucket-name> \
+  --lifecycle-configuration file://lifecycle.json
+```
+
+Verify it applied with `aws s3api get-bucket-lifecycle-configuration --bucket <your-clean-bucket-name>`. If you change the retention period, update both this rule's `Days` value and `AWS_S3_CLEAN_FILE_TTL_HOURS` together - the app doesn't read the bucket's lifecycle configuration, so the two aren't automatically kept in sync.
+
 ### AWS IAM & Security Setup
 To securely connect S3, SQS, and your ClamAV Fargate containers, you must configure the following AWS Permissions:
 
@@ -508,13 +534,13 @@ The API strictly adheres to the following HTTP status codes for all scan endpoin
 
 > **Note on degraded scans:** if YARA or Maldet fails to complete for a given scan (crash, missing binary, or exceeding `SCAN_ENGINE_TIMEOUT_SECONDS`), the HTTP status code still reflects the engines that *did* complete, but the `av-signature` field is appended with `WARNING: <Engine> engine(s) did not complete - scan coverage reduced` so callers can detect and act on reduced detection coverage rather than trusting a false all-clear.
 
-> **Optional response fields - `s3_path`, `download_url`, and `file_content`:** every scan response can additionally carry `s3_path` (the `s3://bucket/key` URI of the scanned file), `download_url` (a presigned, time-limited HTTPS link to fetch that same object - not natively single-use, valid for `AWS_S3_PRESIGNED_URL_TTL_SECONDS`, default 15 minutes), and `file_content` (the scanned file's bytes, base64-encoded).
+> **Optional response fields - `s3_path` and `download_url`:** every scan response can additionally carry `s3_path` (the `s3://bucket/key` URI of the scanned file) and `download_url` (a presigned, time-limited HTTPS link to fetch that same object - not natively single-use, valid for `AWS_S3_PRESIGNED_URL_TTL_SECONDS`, default 15 minutes). There is no `file_content`/`?include_file=true` option - `download_url` is the only way to retrieve the scanned bytes, by design: embedding a file's raw content (base64 or not) directly in a JSON response, for both CLEAN and INFECTED verdicts, was judged an unnecessary duplication of `download_url` and unwanted surface area for a document-scanning API.
 >
 > On the S3/SQS event-driven flow, `s3_path` is populated automatically (the file already lives in S3) but `download_url` is intentionally omitted - a consumer with direct bucket access doesn't need a presigned link. On the four sync/async scan APIs (`/api/v1/scan/file`, `/api/v1/scan/url`, `/api/v1/async-scan/file`, `/api/v1/async-scan/url`), `s3_path` is populated whenever the relevant bucket is configured - `AWS_S3_CLEAN_BUCKET` for a `CLEAN` verdict, `AWS_S3_QUARANTINE_BUCKET` for `INFECTED` - and omitted if that bucket isn't set, since nothing is uploaded in that case. This adds upload/presign latency to those requests, most noticeably to synchronous `CLEAN` scans, which otherwise return as soon as the engines finish.
 >
-> **`download_url` and `file_content` are never returned for an `INFECTED` verdict**, regardless of `?include_file=true` or which buckets are configured. The scanned file is still uploaded to `AWS_S3_QUARANTINE_BUCKET` (so `s3_path` is still populated, and a security team with their own S3 access can retrieve it), but the API itself never hands back a direct download link or embeds a confirmed-malicious file's raw bytes in a JSON response - doing so would let the scan API be used as an unintentional malware distribution channel for anyone with access to the response. This applies uniformly across sync, async webhook payloads, and async poll responses.
+> **`download_url` is never returned for an `INFECTED` verdict**, regardless of which buckets are configured. The scanned file is still uploaded to `AWS_S3_QUARANTINE_BUCKET` (so `s3_path` is still populated, and a security team with their own S3 access can retrieve it), but the API itself never hands back a direct download link for it - doing so would let the scan API be used as an unintentional malware distribution channel for anyone with access to the response. This applies uniformly across sync, async webhook payloads, and async poll responses.
 >
-> For `CLEAN` results, `file_content` is opt-in via `?include_file=true` (works on all four sync/async endpoints) to have it embedded in the response/webhook payload. It's off by default because base64 inflates the payload by roughly a third, and is deliberately never populated for S3-triggered scans - a consumer that wants the bytes there can fetch them directly from `s3_path`/`download_url` instead of receiving them re-embedded in every webhook call.
+> **`AWS_S3_CLEAN_BUCKET` layout and retention:** CLEAN uploads are written under a `files/` prefix (`files/<tenant_id>/<date>/<uuid>-<filename>`), which is the prefix an S3 Lifecycle Expiration rule should be scoped to if you want automatic cleanup (see `AWS_S3_CLEAN_FILE_TTL_HOURS` below - S3 Lifecycle itself only supports whole-day granularity, so "N hours" here is informational only, used to compute the audit record's `file_expires_at`, not to enforce deletion). Alongside every CLEAN upload, a JSON audit record is also written under `audit/<tenant_id>/<date>/<scan_id>.json` in the *same* bucket - deliberately under a separate top-level prefix so a Lifecycle rule scoped to `files/` never touches it, meaning the audit trail survives the file's own deletion. The audit record carries `scan_id`, `request_id`, `tenant_id`, `filename`, `sha256`, `av-status`, `av-signature`, `file_s3_key`, `file_uploaded_at`, and `file_expires_at`. `AWS_S3_QUARANTINE_BUCKET` keeps its original flat key layout (no `files/`/`audit/` split, no expiration) - quarantined files are retained indefinitely by design.
 
 ---
 
@@ -582,7 +608,7 @@ docker compose -f docker-compose.local.yml down -v
 | 14 | S3 upload → SQS → scan → tag → webhook | full async pipeline |
 | 15 | `POST /api/v1/events/s3` | EventBridge-style S3 event → clean file tagged CLEAN |
 
-> **Coverage gap:** these scripts predate the `AWS_S3_CLEAN_BUCKET`/`download_url`, `ALLOWED_FILE_TYPES`, MalwareBazaar, and INFECTED-verdict `download_url`/`file_content` suppression features - they've been verified manually (against this same local stack and, separately, a live deployment) but aren't yet exercised by an automated script here. Worth adding dedicated cases if this test rig is going to stay the source of truth for regressions.
+> **Coverage gap:** these scripts predate the `AWS_S3_CLEAN_BUCKET`/`download_url`, `ALLOWED_FILE_TYPES`, MalwareBazaar, the INFECTED-verdict `download_url` suppression, and the `files/`+`audit/` clean-bucket hierarchy - they've been verified manually (against this same local stack and, separately, a live deployment) but aren't yet exercised by an automated script here. Worth adding dedicated cases if this test rig is going to stay the source of truth for regressions.
 
 #### Running the Go unit tests
 

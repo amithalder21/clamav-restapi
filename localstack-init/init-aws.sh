@@ -23,6 +23,26 @@ awslocal s3 mb "s3://clamrest-quarantine"
 echo "[init] Creating S3 Clean bucket: clamrest-clean"
 awslocal s3 mb "s3://clamrest-clean"
 
+# Mirrors the production Lifecycle rule documented in the README - scoped to
+# the "files/" prefix only, so "audit/" is never touched. NOTE: LocalStack
+# community edition accepts and stores this configuration but does not run
+# a background expiration sweep the way real S3 does, so this is here for
+# configuration-testing purposes (e.g. get-bucket-lifecycle-configuration),
+# not to actually observe files disappearing after 1 day locally.
+echo "[init] Applying clean-bucket Lifecycle rule (files/ prefix, 1 day expiration)"
+awslocal s3api put-bucket-lifecycle-configuration \
+  --bucket clamrest-clean \
+  --lifecycle-configuration '{
+    "Rules": [
+      {
+        "ID": "expire-clean-files-after-1-day",
+        "Status": "Enabled",
+        "Filter": { "Prefix": "files/" },
+        "Expiration": { "Days": 1 }
+      }
+    ]
+  }'
+
 echo "[init] Creating SQS queue: $QUEUE_NAME"
 awslocal sqs create-queue --queue-name "$QUEUE_NAME"
 QUEUE_URL=$(awslocal sqs get-queue-url --queue-name "$QUEUE_NAME" --query 'QueueUrl' --output text)
