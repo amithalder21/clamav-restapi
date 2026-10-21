@@ -71,6 +71,18 @@ type AuditRecord struct {
 	FileS3Key      string `json:"file_s3_key"`
 	FileUploadedAt string `json:"file_uploaded_at"`
 	FileExpiresAt  string `json:"file_expires_at"`
+	// ScanMS is the wall-clock time of the whole multi-engine scan and
+	// EngineMS its per-engine breakdown. Records written before these fields
+	// existed have EngineMS == nil (distinguishing "not timed" from 0 ms).
+	ScanMS   int64            `json:"scan_ms"`
+	EngineMS *EngineTimingsMS `json:"engine_ms,omitempty"`
+}
+
+type EngineTimingsMS struct {
+	ClamAV        int64 `json:"clamav"`
+	YARA          int64 `json:"yara"`
+	Maldet        int64 `json:"maldet"`
+	MalwareBazaar int64 `json:"malwarebazaar"`
 }
 
 // persistScannedFile uploads the file to whichever bucket is appropriate for
@@ -98,7 +110,7 @@ type AuditRecord struct {
 // Returns ("", "") if the relevant bucket isn't configured (nothing is
 // uploaded), the status is neither CLEAN nor INFECTED (e.g. an engine ERROR
 // - nothing meaningful to persist), or the upload/presign step fails.
-func persistScannedFile(status string, tenantID string, originalName string, filePath string, requestID string, scanID string, description string) (s3Path string, downloadURL string) {
+func persistScannedFile(status string, tenantID string, originalName string, filePath string, requestID string, scanID string, description string, timings ScanTimings) (s3Path string, downloadURL string) {
 	var bucket string
 	switch status {
 	case "CLEAN":
@@ -143,6 +155,13 @@ func persistScannedFile(status string, tenantID string, originalName string, fil
 		FileS3Key:      key,
 		FileUploadedAt: uploadedAt.Format(time.RFC3339),
 		FileExpiresAt:  uploadedAt.Add(cleanFileTTL()).Format(time.RFC3339),
+		ScanMS:         timings.Total.Milliseconds(),
+		EngineMS: &EngineTimingsMS{
+			ClamAV:        timings.ClamAV.Milliseconds(),
+			YARA:          timings.YARA.Milliseconds(),
+			Maldet:        timings.Maldet.Milliseconds(),
+			MalwareBazaar: timings.MalwareBazaar.Milliseconds(),
+		},
 	}, requestID)
 
 	return s3Path, url

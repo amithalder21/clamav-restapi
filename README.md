@@ -151,6 +151,7 @@ Below is the complete list of available environment variables that can be used t
 | `AWS_S3_CLEAN_BUCKET` | If set to a bucket name, files scanned as `CLEAN` via the sync/async scan APIs are uploaded here so a `download_url` can be returned alongside the verdict. Optional - if unset, `CLEAN` results simply omit `s3_path`/`download_url`. |
 | `AWS_S3_PRESIGNED_URL_TTL_SECONDS` | How long a `download_url` presigned link stays valid, in seconds. Default `900` (15 minutes). |
 | `AWS_S3_CLEAN_FILE_TTL_HOURS` | Informational only - used to compute the `file_expires_at` timestamp written into each CLEAN upload's audit record. Does **not** itself delete anything; the actual deletion is an S3 Lifecycle Expiration rule you configure on `AWS_S3_CLEAN_BUCKET` scoped to the `files/` prefix (S3 Lifecycle is day-granularity only). Keep this in sync with whatever that rule is actually set to. Default `24` (1 day). |
+| `SCAN_DASHBOARD_PATH_ID` | Optional. A 12-digit number used as the URL segment for the scan-time dashboard (`/api/v1/<id>`), so it is not served on a guessable path like `/admin`. Defaults to a built-in value; set your own per environment. Anything that is not exactly 12 digits disables the dashboard and logs an error. The dashboard is also disabled when `AWS_S3_CLEAN_BUCKET` is not set. |
 | `AWS_SNS_TOPIC_ARN` | If set, the scanner will publish a JSON result payload directly to this SNS Topic. |
 | `AWS_SNS_ONLY_INFECTED` | If `true`, the scanner will only publish to SNS if a file is infected. |
 | `AWS_REGION` | The AWS Region your queue and bucket reside in (e.g. `us-east-1`). |
@@ -385,6 +386,17 @@ aws s3api put-bucket-lifecycle-configuration \
 
 Verify it applied with `aws s3api get-bucket-lifecycle-configuration --bucket <your-clean-bucket-name>`. If you change the retention period, update both this rule's `Days` value and `AWS_S3_CLEAN_FILE_TTL_HOURS` together - the app doesn't read the bucket's lifecycle configuration, so the two aren't automatically kept in sync.
 
+### Scan-Time Dashboard
+
+A small read-only page for service teams (e.g. DocIntel) to see how long the malware scan takes, built from the `audit/` records above.
+
+* **Page:** `GET /api/v1/<SCAN_DASHBOARD_PATH_ID>` - a static HTML shell with no data in it. It asks for an API access token, which stays in memory only (never in the URL or `localStorage`).
+* **Data:** `GET /api/v1/<SCAN_DASHBOARD_PATH_ID>/data?days=1|7|15|30&page=1&sort=newest|slowest&q=<file name filter>` - protected by the normal Cognito JWT check (`AuthMiddleware`), **not** the admin scope. The tenant is always taken from the token's `client_id`, so a caller only ever sees their own tenant's records and there is no tenant parameter to tamper with.
+* **Shows:** scan ID, file name, total scan time, and the per-engine times (ClamAV, YARA, Maldet, MalwareBazaar), 100 rows per page. Only CLEAN scans are listed (INFECTED scans write no audit record). Records written before `scan_ms`/`engine_ms` existed appear with dashes.
+* **Caching:** finished days are cached in Redis/Dragonfly (when `REDIS_URL` is set) for 31 days; the current day for 60 seconds. Without Redis every request re-reads S3. At most 20,000 records are returned per request (the page says when it is truncated).
+* **IAM:** the task role needs `s3:ListBucket` and `s3:GetObject` on `audit/*` in `AWS_S3_CLEAN_BUCKET`.
+* **Hardening:** per-request CSP nonce, no external resources, file names rendered as text only. The obscure path is an extra layer on top of the JWT check, not a replacement for it.
+
 ### AWS IAM & Security Setup
 To securely connect S3, SQS, and your ClamAV Fargate containers, you must configure the following AWS Permissions:
 
@@ -540,7 +552,7 @@ The API strictly adheres to the following HTTP status codes for all scan endpoin
 >
 > **`download_url` is never returned for an `INFECTED` verdict**, regardless of which buckets are configured. The scanned file is still uploaded to `AWS_S3_QUARANTINE_BUCKET` (so `s3_path` is still populated, and a security team with their own S3 access can retrieve it), but the API itself never hands back a direct download link for it - doing so would let the scan API be used as an unintentional malware distribution channel for anyone with access to the response. This applies uniformly across sync, async webhook payloads, and async poll responses.
 >
-> **`AWS_S3_CLEAN_BUCKET` layout and retention:** CLEAN uploads are written under a `files/` prefix (`files/<tenant_id>/<date>/<uuid>-<filename>`), which is the prefix an S3 Lifecycle Expiration rule should be scoped to if you want automatic cleanup (see `AWS_S3_CLEAN_FILE_TTL_HOURS` below - S3 Lifecycle itself only supports whole-day granularity, so "N hours" here is informational only, used to compute the audit record's `file_expires_at`, not to enforce deletion). Alongside every CLEAN upload, a JSON audit record is also written under `audit/<tenant_id>/<date>/<scan_id>.json` in the *same* bucket - deliberately under a separate top-level prefix so a Lifecycle rule scoped to `files/` never touches it, meaning the audit trail survives the file's own deletion. The audit record carries `scan_id`, `request_id`, `tenant_id`, `filename`, `sha256`, `av-status`, `av-signature`, `file_s3_key`, `file_uploaded_at`, and `file_expires_at`. `AWS_S3_QUARANTINE_BUCKET` keeps its original flat key layout (no `files/`/`audit/` split, no expiration) - quarantined files are retained indefinitely by design.
+> **`AWS_S3_CLEAN_BUCKET` layout and retention:** CLEAN uploads are written under a `files/` prefix (`files/<tenant_id>/<date>/<uuid>-<filename>`), which is the prefix an S3 Lifecycle Expiration rule should be scoped to if you want automatic cleanup (see `AWS_S3_CLEAN_FILE_TTL_HOURS` below - S3 Lifecycle itself only supports whole-day granularity, so "N hours" here is informational only, used to compute the audit record's `file_expires_at`, not to enforce deletion). Alongside every CLEAN upload, a JSON audit record is also written under `audit/<tenant_id>/<date>/<scan_id>.json` in the *same* bucket - deliberately under a separate top-level prefix so a Lifecycle rule scoped to `files/` never touches it, meaning the audit trail survives the file's own deletion. The audit record carries `scan_id`, `request_id`, `tenant_id`, `filename`, `sha256`, `av-status`, `av-signature`, `file_s3_key`, `file_uploaded_at`, `file_expires_at`, `scan_ms` (wall-clock time of the whole multi-engine scan - the slowest engine, since the four run in parallel) and `engine_ms` (`clamav`, `yara`, `maldet`, `malwarebazaar` in milliseconds). Records written before `scan_ms`/`engine_ms` were added simply omit `engine_ms`. `AWS_S3_QUARANTINE_BUCKET` keeps its original flat key layout (no `files/`/`audit/` split, no expiration) - quarantined files are retained indefinitely by design.
 
 ---
 

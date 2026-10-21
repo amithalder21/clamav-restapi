@@ -133,7 +133,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, part.FileName(), c, requestID)
+			aggregatedResult, scanTimings, err := RunMultiEngineScanTimed(tempFile, tempFilePath, part.FileName(), c, requestID)
 			tempFile.Close()
 
 			if err != nil {
@@ -157,7 +157,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			)
 			tenantID, _ := r.Context().Value(TenantContextKey).(string)
-			s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, part.FileName(), tempFilePath, requestID, "", s.Description)
+			s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, part.FileName(), tempFilePath, requestID, "", s.Description, scanTimings)
 			writeScanResponse(w, s, part.FileName(), ExtraFields{S3Path: s3Path, DownloadURL: downloadURL})
 			break
 			return // Process only the first uploaded file to prevent invalid JSON streaming
@@ -245,6 +245,8 @@ func main() {
 	http.HandleFunc("/api/v1/admin/status", RequestLoggingMiddleware(AdminAuthMiddleware(adminStatusHandler)))
 	http.HandleFunc("/api/v1/admin/reload", RequestLoggingMiddleware(AdminAuthMiddleware(adminReloadHandler)))
 	http.HandleFunc("/api/v1/admin/update-signatures", RequestLoggingMiddleware(AdminAuthMiddleware(adminUpdateSignaturesHandler)))
+
+	registerScanDashboard()
 
 	// Not wrapped in RequestLoggingMiddleware: an ALB target-group health
 	// check hits this every 10-30s per task, forever. There's no meaningful

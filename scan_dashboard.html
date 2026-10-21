@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Malware scan time</title>
+<style nonce="{{NONCE}}">
+:root{color-scheme:light dark;--bg:#fafaf8;--card:#fff;--text:#1f1f1d;--muted:#6b6b66;--line:#e3e2dc;--accent:#185fa5;--accent-bg:#e6f1fb;--warn:#854f0b;--warn-bg:#faeeda;--err:#a32d2d}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1c1a;--card:#262624;--text:#efeee9;--muted:#a3a29b;--line:#3a3a37;--accent:#85b7eb;--accent-bg:#0c447c;--warn:#fac775;--warn-bg:#412402;--err:#f09595}}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:1000px;margin:0 auto}
+h1{font-size:18px;font-weight:500;margin:0 0 2px}
+.sub{color:var(--muted);font-size:12px;margin:0 0 16px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.bar .grow{flex:1;min-width:180px}
+input,button{font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+input{width:100%}
+button{cursor:pointer}
+button[aria-pressed="true"]{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+.wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
+table{width:100%;min-width:680px;border-collapse:collapse;font-size:12px}
+th,td{padding:9px 10px;text-align:right;border-top:1px solid var(--line);white-space:nowrap}
+thead th{border-top:0;color:var(--muted);font-weight:500}
+th.l,td.l{text-align:left}
+td.id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);cursor:pointer}
+td.fn{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+td.tot{font-weight:500}
+td.slow{background:var(--warn-bg);color:var(--warn)}
+th.sortable{cursor:pointer}
+.foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin-top:10px;color:var(--muted);font-size:12px}
+.pager{display:flex;gap:8px;align-items:center}
+#msg{margin:12px 0;font-size:13px}
+#msg.err{color:var(--err)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>Malware scan time</h1>
+  <p class="sub" id="sub">Paste your API token to load your scans.</p>
+
+  <form class="bar" id="auth" autocomplete="off">
+    <input class="grow" id="token" type="password" placeholder="API access token" aria-label="API access token" spellcheck="false">
+    <button type="submit">Load</button>
+  </form>
+
+  <div id="view" class="hidden">
+    <div class="bar">
+      <span id="ranges" role="group" aria-label="Date range"></span>
+      <input class="grow" id="q" type="search" placeholder="Filter by file name" aria-label="Filter by file name">
+    </div>
+    <div class="wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="l">Scan ID</th>
+            <th class="l">File name</th>
+            <th class="sortable" id="th-total" title="Sort by total scan time">Total</th>
+            <th>ClamAV</th>
+            <th>YARA</th>
+            <th>Maldet</th>
+            <th>MalwareBazaar</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="foot">
+      <span>Total is the slowest engine, because the engines run in parallel. The shaded cell is the slowest in that row. Only clean scans are listed.</span>
+      <span class="pager">
+        <button id="prev" type="button" aria-label="Previous page">&lsaquo;</button>
+        <span id="page"></span>
+        <button id="next" type="button" aria-label="Next page">&rsaquo;</button>
+      </span>
+    </div>
+  </div>
+  <p id="msg" role="status"></p>
+</main>
+<script nonce="{{NONCE}}">
+(function () {
+  var state = { token: "", days: 7, page: 1, sort: "newest", q: "", pages: 1 };
+  var $ = function (id) { return document.getElementById(id); };
+  var base = location.pathname.replace(/\/+$/, "");
+  var timer = null;
+
+  [1, 7, 15, 30].forEach(function (d) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = d + (d === 1 ? " day" : " days");
+    b.dataset.days = String(d);
+    b.onclick = function () { state.days = d; state.page = 1; load(); };
+    $("ranges").appendChild(b);
+  });
+
+  function sec(ms) { return (ms / 1000).toFixed(2) + " s"; }
+
+  function say(text, isErr) {
+    var m = $("msg");
+    m.textContent = text;
+    m.className = isErr ? "err" : "";
+  }
+
+  function cell(tr, text, cls) {
+    var td = document.createElement("td");
+    td.textContent = text;
+    if (cls) td.className = cls;
+    tr.appendChild(td);
+    return td;
+  }
+
+  function render(data) {
+    var tb = $("rows");
+    tb.textContent = "";
+    data.rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      var idCell = cell(tr, r.scan_id.slice(0, 8) + "…", "l id");
+      idCell.title = r.scan_id + (r.at ? "  |  " + r.at : "") + "  |  click to copy";
+      idCell.onclick = function () {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(r.scan_id).then(function () { say("Copied scan ID " + r.scan_id, false); });
+        }
+      };
+      var fn = cell(tr, r.filename, "l fn");
+      fn.title = r.filename;
+      var e = r.engine_ms;
+      if (!e) {
+        cell(tr, "—", "tot");
+        for (var i = 0; i < 4; i++) cell(tr, "—", "");
+      } else {
+        cell(tr, sec(r.scan_ms), "tot");
+        var vals = [["clamav", e.clamav], ["yara", e.yara], ["maldet", e.maldet], ["malwarebazaar", e.malwarebazaar]];
+        var slowest = 0;
+        vals.forEach(function (v, k) { if (v[1] > vals[slowest][1]) slowest = k; });
+        vals.forEach(function (v, k) { cell(tr, sec(v[1]), k === slowest ? "slow" : ""); });
+      }
+      tb.appendChild(tr);
+    });
+    if (!data.rows.length) {
+      var tr = document.createElement("tr");
+      var td = cell(tr, "No scans found for this range.", "l");
+      td.colSpan = 7;
+      tb.appendChild(tr);
+    }
+    state.pages = data.pages;
+    $("page").textContent = "Page " + data.page + " of " + data.pages;
+    $("prev").disabled = data.page <= 1;
+    $("next").disabled = data.page >= data.pages;
+    $("th-total").textContent = "Total" + (state.sort === "slowest" ? " ↓" : "");
+    $("sub").textContent = data.total.toLocaleString() + " scans in the last " + data.days + (data.days === 1 ? " day" : " days") +
+      (data.truncated ? " (showing the most recent " + data.total.toLocaleString() + "; narrow the range for the rest)" : "");
+    Array.prototype.forEach.call($("ranges").children, function (b) {
+      b.setAttribute("aria-pressed", String(+b.dataset.days === state.days));
+    });
+  }
+
+  function load() {
+    var qs = "days=" + state.days + "&page=" + state.page + "&sort=" + state.sort + "&q=" + encodeURIComponent(state.q);
+    say("Loading…", false);
+    fetch(base + "/data?" + qs, { headers: { Authorization: "Bearer " + state.token }, cache: "no-store" })
+      .then(function (res) {
+        if (res.status === 401 || res.status === 403) throw new Error("Your token was rejected or has expired. Paste a fresh one.");
+        if (!res.ok) throw new Error("Could not load scans (status " + res.status + ").");
+        return res.json();
+      })
+      .then(function (data) {
+        $("view").classList.remove("hidden");
+        say("", false);
+        render(data);
+      })
+      .catch(function (err) {
+        $("view").classList.add("hidden");
+        say(err.message, true);
+      });
+  }
+
+  $("auth").onsubmit = function (ev) {
+    ev.preventDefault();
+    var t = $("token").value.trim();
+    if (!t) { say("Enter your API access token first.", true); return; }
+    state.token = t.replace(/^Bearer\s+/i, "");
+    $("token").value = "";
+    state.page = 1;
+    load();
+  };
+  $("q").oninput = function (ev) {
+    clearTimeout(timer);
+    timer = setTimeout(function () { state.q = ev.target.value; state.page = 1; load(); }, 300);
+  };
+  $("th-total").onclick = function () { state.sort = state.sort === "slowest" ? "newest" : "slowest"; state.page = 1; load(); };
+  $("prev").onclick = function () { if (state.page > 1) { state.page--; load(); } };
+  $("next").onclick = function () { if (state.page < state.pages) { state.page++; load(); } };
+})();
+</script>
+</body>
+</html>

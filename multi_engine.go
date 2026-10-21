@@ -156,7 +156,23 @@ func RunMaldetScan(filePath string, requestID string) (result EngineResult) {
 	return result
 }
 
+// ScanTimings is the wall-clock cost of one multi-engine scan. Total is the
+// full span of RunMultiEngineScanTimed (engines run in parallel, so it tracks
+// the slowest engine rather than the sum of all four).
+type ScanTimings struct {
+	Total         time.Duration
+	ClamAV        time.Duration
+	YARA          time.Duration
+	Maldet        time.Duration
+	MalwareBazaar time.Duration
+}
+
 func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c *clamd.Clamd, requestID string) (*clamd.ScanResult, error) {
+	result, _, err := RunMultiEngineScanTimed(f, filePath, originalFilename, c, requestID)
+	return result, err
+}
+
+func RunMultiEngineScanTimed(f *os.File, filePath string, originalFilename string, c *clamd.Clamd, requestID string) (*clamd.ScanResult, ScanTimings, error) {
 	wallStart := time.Now()
 	var abort chan bool
 	var wg sync.WaitGroup
@@ -214,10 +230,18 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	// meaningfully larger than the max of the 3 engine times below, that gap
 	// is goroutine-scheduling/CPU-throttling overhead, not engine work, and
 	// is now visible directly instead of requiring manual timestamp math.
+	timings := ScanTimings{
+		Total:         time.Since(wallStart),
+		ClamAV:        clamDuration,
+		YARA:          yaraResult.Duration,
+		Maldet:        maldetResult.Duration,
+		MalwareBazaar: malwareBazaarResult.Duration,
+	}
+
 	slog.Info("Multi-engine scan timing",
 		slog.String("request_id", requestID),
 		slog.String("file", filePath),
-		slog.Int64("total_wall_ms", time.Since(wallStart).Milliseconds()),
+		slog.Int64("total_wall_ms", timings.Total.Milliseconds()),
 		slog.Int64("clamav_ms", clamDuration.Milliseconds()),
 		slog.Int64("yara_ms", yaraResult.Duration.Milliseconds()),
 		slog.Int64("maldet_ms", maldetResult.Duration.Milliseconds()),
@@ -225,7 +249,7 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 	)
 
 	if clamErr != nil {
-		return clamResult, clamErr
+		return clamResult, timings, clamErr
 	}
 
 	// Aggregate results
@@ -296,5 +320,5 @@ func RunMultiEngineScan(f *os.File, filePath string, originalFilename string, c 
 		Description: finalDescription,
 	}
 
-	return aggregatedResult, nil
+	return aggregatedResult, timings, nil
 }

@@ -221,7 +221,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
-		aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, req.URL, c, requestID)
+		aggregatedResult, scanTimings, err := RunMultiEngineScanTimed(tempFile, tempFilePath, req.URL, c, requestID)
 		tempFile.Close()
 		if err != nil {
 			slog.Error("RunMultiEngineScan error", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.Any("error", err))
@@ -240,7 +240,7 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 		resultStatus := formatStatus(aggregatedResult.Status)
-		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, req.URL, tempFilePath, requestID, scanID, aggregatedResult.Description)
+		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, req.URL, tempFilePath, requestID, scanID, aggregatedResult.Description, scanTimings)
 		publishAsyncResultFull(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID, s3Path, downloadURL)
 	}()
 }
@@ -349,7 +349,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 
 		c := clamd.NewClamd(opts["APP_CLAMD_ENDPOINT"])
 
-		aggregatedResult, err := RunMultiEngineScan(f, filename, originalName, c, requestID)
+		aggregatedResult, scanTimings, err := RunMultiEngineScanTimed(f, filename, originalName, c, requestID)
 		if err != nil {
 			slog.Error("RunMultiEngineScan error", slog.String("request_id", requestID), slog.String("scan_id", scanID), slog.Any("error", err))
 			publishAsyncResult(webhookURL, &clamd.ScanResult{Status: clamd.RES_ERROR, Description: "Scan engine error"}, scanID, originalName, tenantID)
@@ -370,7 +370,7 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		// Persist to S3 (clean or quarantine bucket) before publishing the
 		// webhook/poll result, so that payload can carry the resulting
 		// s3_path/download_url instead of firing them off separately.
-		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, originalName, filename, requestID, scanID, aggregatedResult.Description)
+		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, originalName, filename, requestID, scanID, aggregatedResult.Description, scanTimings)
 		publishAsyncResultFull(webhookURL, aggregatedResult, scanID, originalName, tenantID, s3Path, downloadURL)
 	}(tempFile.Name(), header.Filename)
 }

@@ -96,7 +96,7 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	aggregatedResult, err := RunMultiEngineScan(tempFile, tempFilePath, req.URL, c, requestID)
+	aggregatedResult, scanTimings, err := RunMultiEngineScanTimed(tempFile, tempFilePath, req.URL, c, requestID)
 	tempFile.Close()
 
 	if err != nil {
@@ -116,6 +116,6 @@ func scanURLHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 	)
 	tenantID, _ := r.Context().Value(TenantContextKey).(string)
-	s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, req.URL, tempFilePath, requestID, "", s.Description)
+	s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, req.URL, tempFilePath, requestID, "", s.Description, scanTimings)
 	writeScanResponse(w, s, req.URL, ExtraFields{S3Path: s3Path, DownloadURL: downloadURL})
 }
