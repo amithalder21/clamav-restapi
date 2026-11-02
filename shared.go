@@ -97,6 +97,10 @@ type ScanResponse struct {
 	Status      string `json:"av-status"`
 	Description string `json:"av-signature"`
 	Timestamp   string `json:"av-timestamp"`
+	// SHA256 is the cryptographic hex digest of the scanned file.
+	// Always populated for scanned files so consumers (e.g. DocIntel) can
+	// verify the integrity of the downloaded file against the verdict.
+	SHA256 string `json:"sha256,omitempty"`
 	// S3Path is the full s3://bucket/key URI. Always populated for the
 	// S3/SQS-triggered scan flow (the file already has a real S3 location).
 	// For direct upload/URL scans (sync and async), populated only if the
@@ -122,13 +126,14 @@ func formatStatus(status string) string {
 	}
 }
 
-// ExtraFields bundles the optional ScanResponse fields (S3Path, DownloadURL)
+// ExtraFields bundles the optional ScanResponse fields (S3Path, DownloadURL, SHA256)
 // so writeScanResponse/formatScanResponse don't keep growing positional
 // string parameters as more optional fields get added. Zero value (all
-// fields "") omits both.
+// fields "") omits them.
 type ExtraFields struct {
 	S3Path      string
 	DownloadURL string
+	SHA256      string
 }
 
 // writeScanResponse writes a standardized JSON response and status code.
@@ -159,6 +164,7 @@ func writeScanResponse(w http.ResponseWriter, s *clamd.ScanResult, filename stri
 		Status:      normalizedStatus,
 		Description: signature,
 		Timestamp:   time.Now().UTC().Format("2006/01/02 15:04:05 UTC"),
+		SHA256:      extra.SHA256,
 		S3Path:      extra.S3Path,
 		DownloadURL: extra.DownloadURL,
 	})
@@ -184,6 +190,7 @@ func formatScanResponse(s *clamd.ScanResult, scanID string, filename string, ext
 		Status:      normalizedStatus,
 		Description: signature,
 		Timestamp:   time.Now().UTC().Format("2006/01/02 15:04:05 UTC"),
+		SHA256:      extra.SHA256,
 		S3Path:      extra.S3Path,
 		DownloadURL: extra.DownloadURL,
 	})

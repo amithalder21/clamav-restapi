@@ -101,7 +101,7 @@ func TestPersistScannedFileWritesTimingsToAuditRecord(t *testing.T) {
 		MalwareBazaar: 480 * time.Millisecond,
 	}
 
-	_, _ = persistScannedFile("CLEAN", "tenant-a", "invoice.pdf", writeTempScanFile(t), "req-1", "scan-1", "CLEAN", timings)
+	_, _, _ = persistScannedFile("CLEAN", "tenant-a", "invoice.pdf", writeTempScanFile(t), "req-1", "scan-1", "CLEAN", timings)
 
 	keys := s3.keysWithPrefix("clean-bucket/audit/tenant-a/")
 	if len(keys) != 1 {
