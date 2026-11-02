@@ -66,14 +66,14 @@ func markScanProcessing(tenantID, scanID, filename string) {
 // every error path, where there's no meaningful S3 location to offer
 // alongside the error description.
 func publishAsyncResult(webhookURL string, s *clamd.ScanResult, scanID string, filename string, tenantID string) {
-	publishAsyncResultFull(webhookURL, s, scanID, filename, tenantID, "", "")
+	publishAsyncResultFull(webhookURL, s, scanID, filename, tenantID, "", "", "")
 }
 
-// publishAsyncResultFull is publishAsyncResult plus s3Path/downloadURL - used
+// publishAsyncResultFull is publishAsyncResult plus s3Path/downloadURL/sha256Hash - used
 // by the actual scan-completed paths, which may have either to offer (see
 // ScanResponse for what each field means and when it's populated).
-func publishAsyncResultFull(webhookURL string, s *clamd.ScanResult, scanID string, filename string, tenantID string, s3Path string, downloadURL string) {
-	payload, _ := formatScanResponse(s, scanID, filename, ExtraFields{S3Path: s3Path, DownloadURL: downloadURL})
+func publishAsyncResultFull(webhookURL string, s *clamd.ScanResult, scanID string, filename string, tenantID string, s3Path string, downloadURL string, sha256Hash string) {
+	payload, _ := formatScanResponse(s, scanID, filename, ExtraFields{S3Path: s3Path, DownloadURL: downloadURL, SHA256: sha256Hash})
 
 	// Fetch Tenant Config from Redis for dynamic Webhook URL if available
 	if redisClient != nil {
@@ -240,8 +240,8 @@ func scanURLAsyncHandler(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		)
 		resultStatus := formatStatus(aggregatedResult.Status)
-		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, req.URL, tempFilePath, requestID, scanID, aggregatedResult.Description, scanTimings)
-		publishAsyncResultFull(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID, s3Path, downloadURL)
+		s3Path, downloadURL, fileSHA256 := persistScannedFile(resultStatus, tenantID, req.URL, tempFilePath, requestID, scanID, aggregatedResult.Description, scanTimings)
+		publishAsyncResultFull(req.WebhookURL, aggregatedResult, scanID, req.URL, tenantID, s3Path, downloadURL, fileSHA256)
 	}()
 }
 
@@ -370,8 +370,8 @@ func scanAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		// Persist to S3 (clean or quarantine bucket) before publishing the
 		// webhook/poll result, so that payload can carry the resulting
 		// s3_path/download_url instead of firing them off separately.
-		s3Path, downloadURL := persistScannedFile(resultStatus, tenantID, originalName, filename, requestID, scanID, aggregatedResult.Description, scanTimings)
-		publishAsyncResultFull(webhookURL, aggregatedResult, scanID, originalName, tenantID, s3Path, downloadURL)
+		s3Path, downloadURL, fileSHA256 := persistScannedFile(resultStatus, tenantID, originalName, filename, requestID, scanID, aggregatedResult.Description, scanTimings)
+		publishAsyncResultFull(webhookURL, aggregatedResult, scanID, originalName, tenantID, s3Path, downloadURL, fileSHA256)
 	}(tempFile.Name(), header.Filename)
 }
 

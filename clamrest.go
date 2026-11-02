@@ -157,8 +157,8 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			)
 			tenantID, _ := r.Context().Value(TenantContextKey).(string)
-			s3Path, downloadURL := persistScannedFile(formatStatus(s.Status), tenantID, part.FileName(), tempFilePath, requestID, "", s.Description, scanTimings)
-			writeScanResponse(w, s, part.FileName(), ExtraFields{S3Path: s3Path, DownloadURL: downloadURL})
+			s3Path, downloadURL, fileSHA256 := persistScannedFile(formatStatus(s.Status), tenantID, part.FileName(), tempFilePath, requestID, "", s.Description, scanTimings)
+			writeScanResponse(w, s, part.FileName(), ExtraFields{S3Path: s3Path, DownloadURL: downloadURL, SHA256: fileSHA256})
 			break
 			return // Process only the first uploaded file to prevent invalid JSON streaming
 		}

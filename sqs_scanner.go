@@ -343,6 +343,8 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			}
 		}
 
+		fileSHA256 := sha256OrEmpty(tempFilePath, requestID)
+
 		// 5. Optionally publish to SNS
 		if snsTopicARN, ok := opts["AWS_SNS_TOPIC_ARN"]; ok && snsTopicARN != "" {
 			publish := true
@@ -356,6 +358,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 					"av-status":    scanStatus,
 					"av-signature": scanSignature,
 					"av-timestamp": timestamp,
+					"sha256":       fileSHA256,
 				}
 				msgBytes, _ := json.Marshal(snsPayload)
 				msgBody := string(msgBytes)
@@ -380,7 +383,7 @@ func processS3Event(s3Client *s3.Client, snsClient *sns.Client, body string, sca
 			// of scope for presigned download links, which are only generated
 			// for the sync/async scan APIs.
 			s3Path := "s3://" + bucket + "/" + key
-			publishAsyncResultFull(webhookURL, clamdResult, scanID, s3Path, tenantID, s3Path, "")
+			publishAsyncResultFull(webhookURL, clamdResult, scanID, s3Path, tenantID, s3Path, "", fileSHA256)
 		}
 	}
 	

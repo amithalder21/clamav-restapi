@@ -110,7 +110,9 @@ type EngineTimingsMS struct {
 // Returns ("", "") if the relevant bucket isn't configured (nothing is
 // uploaded), the status is neither CLEAN nor INFECTED (e.g. an engine ERROR
 // - nothing meaningful to persist), or the upload/presign step fails.
-func persistScannedFile(status string, tenantID string, originalName string, filePath string, requestID string, scanID string, description string, timings ScanTimings) (s3Path string, downloadURL string) {
+func persistScannedFile(status string, tenantID string, originalName string, filePath string, requestID string, scanID string, description string, timings ScanTimings) (s3Path string, downloadURL string, fileSHA256 string) {
+	fileSHA256 = sha256OrEmpty(filePath, requestID)
+
 	var bucket string
 	switch status {
 	case "CLEAN":
@@ -119,7 +121,7 @@ func persistScannedFile(status string, tenantID string, originalName string, fil
 		bucket = opts["AWS_S3_QUARANTINE_BUCKET"]
 	}
 	if bucket == "" {
-		return "", ""
+		return "", "", fileSHA256
 	}
 
 	id := uuid.New().String()
@@ -131,12 +133,12 @@ func persistScannedFile(status string, tenantID string, originalName string, fil
 
 	url := uploadAndPresign(bucket, key, filePath, requestID)
 	if url == "" {
-		return "", ""
+		return "", "", fileSHA256
 	}
 	s3Path = "s3://" + bucket + "/" + key
 
 	if status == "INFECTED" {
-		return s3Path, ""
+		return s3Path, "", fileSHA256
 	}
 
 	auditScanID := scanID
@@ -149,7 +151,7 @@ func persistScannedFile(status string, tenantID string, originalName string, fil
 		RequestID:      requestID,
 		TenantID:       tenantID,
 		Filename:       originalName,
-		SHA256:         sha256OrEmpty(filePath, requestID),
+		SHA256:         fileSHA256,
 		Status:         status,
 		Signature:      descriptionOrClean(description),
 		FileS3Key:      key,
@@ -164,7 +166,7 @@ func persistScannedFile(status string, tenantID string, originalName string, fil
 		},
 	}, requestID)
 
-	return s3Path, url
+	return s3Path, url, fileSHA256
 }
 
 // sha256OrEmpty hashes filePath for the audit record, logging (not failing)
