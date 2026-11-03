@@ -38,6 +38,8 @@ type EngineResult struct {
 	Duration   time.Duration
 }
 
+var yaraCompiledRules = "/var/lib/yara_rules/compiled.yarc"
+
 func RunYaraScan(filePath string, originalFilename string, requestID string) (result EngineResult) {
 	start := time.Now()
 	defer func() { result.Duration = time.Since(start) }()
@@ -67,7 +69,7 @@ func RunYaraScan(filePath string, originalFilename string, requestID string) (re
 		"-d", "extension="+extension,
 		"-d", "owner=",
 		"-d", "filetype=",
-		"/var/lib/yara_rules/compiled.yarc", filePath)
+		yaraCompiledRules, filePath)
 	output, err := cmd.CombinedOutput()
 
 	if ctx.Err() == context.DeadlineExceeded {
@@ -205,7 +207,7 @@ func RunMultiEngineScanTimed(f *os.File, filePath string, originalFilename strin
 	// Worker 2: YARA
 	go func() {
 		defer wg.Done()
-		yaraResult = RunYaraScan(filePath, originalFilename, requestID)
+		yaraResult = RunYaraScanWithViews(filePath, originalFilename, requestID)
 	}()
 
 	// Worker 3: Maldet
