@@ -162,7 +162,7 @@ Below is the complete list of available environment variables that can be used t
 | `APP_ALLOW_PRIVATE_IPS` | If `true`, disables SSRF protection and allows webhooks/URLs to hit private subnets (e.g., `10.x`, `172.x`). Use only for isolated testing! |
 | `APP_CLAMD_ENDPOINT` | The internal connection string used to talk to the ClamAV daemon - Default `tcp://localhost:3310` |
 | `MAX_SCAN_SIZE` | Amount of data scanned for each file - Default `200M` |
-| `MAX_FILE_SIZE` | Don't scan files larger than this size - Default `100M` |
+| `MAX_FILE_SIZE` | Largest file the service accepts (uploads over it are rejected) and passed to ClamAV as `StreamMaxLength`/`MaxFileSize`. Also the size limit for decoded-content YARA scanning (see below), capped there at 64 MiB. Default `10M`. |
 | `ALLOWED_FILE_TYPES` | Comma-separated allowlist of file extensions accepted on `/api/v1/scan/file`, `/api/v1/scan/url`, `/api/v1/async-scan/file`, and `/api/v1/async-scan/url` (e.g. `pdf,docx,xlsx,zip`) - matched case-insensitively against the submitted filename/URL, checked before any scan engine runs. A disallowed type is rejected with `415`. Unset (default) means no restriction - every file type is accepted, matching prior behavior. Extension-based only, not content/magic-byte verification - a file renamed to a permitted extension still passes this check and reaches the scan engines as usual. |
 | `MAX_RECURSION` | How many nested archives to scan - Default `32` |
 | `MAX_FILES` | Max number of files to extract from archives - Default `50000` |
@@ -397,6 +397,14 @@ A small read-only page for service teams (e.g. DocIntel) to see how long the mal
 * **IAM:** the task role needs `s3:ListBucket` and `s3:GetObject` on `audit/*` in `AWS_S3_CLEAN_BUCKET`.
 * **Hardening:** per-request CSP nonce, no external resources, file names rendered as text only. The obscure path is an extra layer on top of the JWT check, not a replacement for it.
 
+### Decoded-Content Scanning (YARA)
+
+YARA matches raw bytes, and most PDF generators compress content streams, so a pattern inside a compressed stream is invisible to a rule that only sees the file as uploaded. The YARA engine therefore scans twice, in parallel: the file as uploaded, and a "decoded bundle" built from it (`pdf_decode.go`). The bundle contains every stream decoded (FlateDecode, ASCIIHex, ASCII85, chained up to 3 levels deep, found by trying each decoder rather than trusting `/Filter`, so `#xx`-escaped filter names cannot hide a stream) plus copies of the raw and decoded bytes with NUL bytes removed, which collapses UTF-16 and any amount of null padding into plain text. A hit in either pass is a hit; the signature names are merged.
+
+* **Limits:** the size limit follows `MAX_FILE_SIZE` (default 10 MiB, never above a fixed 64 MiB ceiling), and applies on both sides. A file larger than the limit is not decoded at all (it is still scanned as uploaded, and `File over the decoded-content scan size limit` is logged), and the decoded bundle is cut off at the limit, 4096 streams and 3 decode levels, logging `Decoded-content scan hit a decode limit`. Content past a limit is not scanned in the decoded pass; the verdict is not changed.
+* **Cost:** the second YARA pass runs concurrently with the first. On 40 real PDFs it added a median of about 25 ms; a PDF whose compressed content expands past the limit adds the cost of scanning up to the limit, typically a few hundred ms at 10 MiB.
+* **Not covered:** LZW and RunLength streams, encrypted PDFs, and non-PDF containers (their raw bytes are still scanned). ClamAV and Maldet are unchanged; ClamAV already decompresses PDF streams itself.
+
 ### AWS IAM & Security Setup
 To securely connect S3, SQS, and your ClamAV Fargate containers, you must configure the following AWS Permissions:
 
@@ -493,7 +501,7 @@ HTTP/1.1 200 OK
   "raw_version": "ClamAV 1.4.6/28102/Mon Aug 24 08:23:58 2026",
   "clamav": { "engine_version": "1.4.6", "signature_version": "28102", "signature_date": "Mon Aug 24 08:23:58 2026" },
   "stats": { "Pools": "1", "State": "VALID PRIMARY", "Threads": "live 1  idle 0 max 10 idle-timeout 30", "Queue": "0 items" },
-  "config": { "APP_CLAMD_ENDPOINT": "tcp://localhost:3310", "MAX_FILE_SIZE": "25M" },
+  "config": { "APP_CLAMD_ENDPOINT": "tcp://localhost:3310", "MAX_FILE_SIZE": "10M" },
   "go_metrics": { "uptime_seconds": 120, "uptime_human": "2m0s", "goroutines": 4, "memory_allocated_mb": 1.5 }
 }
 ```
